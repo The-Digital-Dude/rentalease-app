@@ -123,8 +123,11 @@ export type InspectionFieldType =
   | "yes-no"
   | "yes-no-na"
   | "pass-fail"
+  | "pass-fail-na"
+  | "checkbox"
   | "checkbox-group"
-  | "table";
+  | "table"
+  | "radio";
 
 export type InspectionTableColumn = {
   id: string;
@@ -338,7 +341,6 @@ export const submitInspectionReport = async (
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "multipart/form-data",
     },
     body: formData,
   });
