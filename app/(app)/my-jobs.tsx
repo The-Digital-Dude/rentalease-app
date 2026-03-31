@@ -604,14 +604,15 @@ export default function ActiveJobsPage() {
         }
 
         return (
-          <JobCompletionModal
-            visible={showCompletionModal}
-            onClose={() => {
-              setShowCompletionModal(false);
-              setSelectedJobForCompletion(null);
-            }}
-            onSubmit={handleCompleteJob}
-            jobId={jobId}
+            <JobCompletionModal
+              visible={showCompletionModal}
+              onClose={() => {
+                setShowCompletionModal(false);
+                setSelectedJobForCompletion(null);
+                loadJobs(false, selectedStatus);
+              }}
+              onSubmit={handleCompleteJob}
+              jobId={jobId}
             jobType={selectedJobForCompletion.jobType}
             job={{
               status: selectedJobForCompletion.status,

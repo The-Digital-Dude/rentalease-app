@@ -1311,7 +1311,10 @@ export default function JobDetailsPage() {
           return (
             <JobCompletionModal
               visible={showCompletionModal}
-              onClose={() => setShowCompletionModal(false)}
+              onClose={() => {
+                setShowCompletionModal(false);
+                loadJobDetails();
+              }}
               onSubmit={handleCompleteJob}
               jobId={finalJobId}
               jobType={job.jobType}
