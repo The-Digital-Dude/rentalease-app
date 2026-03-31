@@ -1298,10 +1298,43 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     itemIndex?: number
   ) => {
     const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
-    setMediaByField((prev) => ({
-      ...prev,
-      [storageKey]: [...(prev[storageKey] || []), media],
-    }));
+    setMediaByField((prev) => {
+      const nextItems = [...(prev[storageKey] || []), media];
+
+      setFormValues((currentValues) => {
+        if (itemIndex === undefined) {
+          return {
+            ...currentValues,
+            [sectionId]: {
+              ...(currentValues[sectionId] || {}),
+              [fieldId]: nextItems.map((item) => item.name || item.uri),
+            },
+          };
+        }
+
+        const currentSectionItems = Array.isArray(currentValues[sectionId])
+          ? currentValues[sectionId]
+          : [];
+        const updatedSectionItems = currentSectionItems.map((item, index) =>
+          index === itemIndex
+            ? {
+                ...(item || {}),
+                [fieldId]: nextItems.map((entry) => entry.name || entry.uri),
+              }
+            : item
+        );
+
+        return {
+          ...currentValues,
+          [sectionId]: updatedSectionItems,
+        };
+      });
+
+      return {
+        ...prev,
+        [storageKey]: nextItems,
+      };
+    });
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
   };
@@ -1313,10 +1346,43 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     itemIndex?: number
   ) => {
     const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
-    setMediaByField((prev) => ({
-      ...prev,
-      [storageKey]: (prev[storageKey] || []).filter((_, i) => i !== index),
-    }));
+    setMediaByField((prev) => {
+      const nextItems = (prev[storageKey] || []).filter((_, i) => i !== index);
+
+      setFormValues((currentValues) => {
+        if (itemIndex === undefined) {
+          return {
+            ...currentValues,
+            [sectionId]: {
+              ...(currentValues[sectionId] || {}),
+              [fieldId]: nextItems.map((item) => item.name || item.uri),
+            },
+          };
+        }
+
+        const currentSectionItems = Array.isArray(currentValues[sectionId])
+          ? currentValues[sectionId]
+          : [];
+        const updatedSectionItems = currentSectionItems.map((item, currentIndex) =>
+          currentIndex === itemIndex
+            ? {
+                ...(item || {}),
+                [fieldId]: nextItems.map((entry) => entry.name || entry.uri),
+              }
+            : item
+        );
+
+        return {
+          ...currentValues,
+          [sectionId]: updatedSectionItems,
+        };
+      });
+
+      return {
+        ...prev,
+        [storageKey]: nextItems,
+      };
+    });
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
   };
