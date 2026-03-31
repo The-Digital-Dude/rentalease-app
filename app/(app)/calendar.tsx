@@ -459,7 +459,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     gap: 6,
   },
   syncButtonDisabled: {
-    backgroundColor: theme.disabled,
+    backgroundColor: theme.background,
   },
   syncButtonText: {
     color: 'white',

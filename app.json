@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "RentalEase Technician",
-    "slug": "RentalEase_Technician",
+    "slug": "rentalease-tech",
     "version": "1.0.0",
     "owner": "juhan.rokoautomations",
     "orientation": "portrait",
@@ -30,10 +30,13 @@
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
-        "INTERNET",
-        "CAMERA",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_EXTERNAL_STORAGE"
+        "android.permission.INTERNET",
+        "android.permission.CAMERA",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
       ],
       "package": "com.rentalease.technician"
     },
@@ -64,7 +67,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f04bd6f3-3938-48b7-9807-a95724efde88"
+        "projectId": "7cc26cb6-6ab3-45ff-88c9-c1bdf7a72283"
       }
     },
     "runtimeVersion": {

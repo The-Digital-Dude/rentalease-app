@@ -1222,7 +1222,7 @@ export default function JobDetailsPage() {
                   styles.claimButton,
                   { backgroundColor: theme.primary },
                   claimingJob && {
-                    backgroundColor: theme.disabled,
+                    backgroundColor: theme.background,
                     opacity: 0.7,
                   },
                 ]}

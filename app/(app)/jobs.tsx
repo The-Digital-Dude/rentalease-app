@@ -543,7 +543,7 @@ export default function JobsPage() {
               backgroundColor: item.status === "Completed" ? "#10B981" : theme.primary 
             },
             claimingJobs.has(item.id) && {
-              backgroundColor: theme.disabled,
+              backgroundColor: theme.background,
               opacity: 0.7,
             },
           ]}

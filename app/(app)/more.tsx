@@ -202,7 +202,7 @@ export default function MorePage() {
             <Switch
               value={item.value}
               onValueChange={item.onToggle}
-              thumbColor={item.value ? theme.primary : theme.disabled}
+              thumbColor={item.value ? theme.primary : theme.background}
               trackColor={{ false: theme.border, true: theme.primaryLight }}
             />
           </View>
