@@ -18,13 +18,15 @@ import type {
   InspectionTemplate,
   InspectionMediaUpload,
   InspectionField,
-} from "@services/jobs";
+} from "../services/jobs";
 import {
   fetchInspectionTemplates,
   fetchInspectionTemplate,
+  fetchJobInspectionTemplate,
   submitInspectionReport,
   fetchJobDetails,
-} from "@services/jobs";
+  getMediaStorageKey,
+} from "../services/jobs";
 
 export interface InvoiceLineItem {
   id: string;
@@ -96,6 +98,16 @@ const getStepsForJobType = (jobType: string) => {
 };
 
 type StepKey = "template" | "rooms" | "form" | "invoice";
+
+const isGasJobType = (value?: string) =>
+  typeof value === "string" && value.toLowerCase().includes("gas");
+
+const isGasTemplateV3 = (template?: InspectionTemplate | null) =>
+  !!template &&
+  template.jobType === "Gas" &&
+  template.sections.some(
+    (section) => section.id === "gas-appliances" && section.repeatable
+  );
 
 const defaultLineItem = (): InvoiceLineItem => ({
   id: `${Date.now()}`,
@@ -332,24 +344,41 @@ const generateMediaPrefillForTemplate = (
   let seed = 1;
 
   template.sections.forEach((section) => {
-    section.fields.forEach((field) => {
-      if (field.type === "photo" || field.type === "photo-multi") {
-        const baseMedia = {
-          uri: placeholderImageUri(seed),
-          name: `${field.id}-${seed}.png`,
-          type: "image/png",
-        };
-        if (field.type === "photo-multi") {
-          result[field.id] = [
-            baseMedia,
-            { ...baseMedia, name: `${field.id}-${seed + 1}.png` },
-          ];
-          seed += 2;
-        } else {
-          result[field.id] = [baseMedia];
-          seed += 1;
-        }
+    const repeatableCount = section.repeatable ? Math.max(section.minItems || 0, 1) : 1;
+
+    const assignPrefill = (field: InspectionField, itemIndex?: number) => {
+      if (field.type !== "photo" && field.type !== "photo-multi") {
+        return;
       }
+
+      const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
+      const baseMedia = {
+        uri: placeholderImageUri(seed),
+        name: `${field.id}-${seed}.png`,
+        type: "image/png",
+      };
+
+      if (field.type === "photo-multi") {
+        result[storageKey] = [
+          baseMedia,
+          { ...baseMedia, name: `${field.id}-${seed + 1}.png` },
+        ];
+        seed += 2;
+      } else {
+        result[storageKey] = [baseMedia];
+        seed += 1;
+      }
+    };
+
+    if (section.repeatable) {
+      for (let itemIndex = 0; itemIndex < repeatableCount; itemIndex += 1) {
+        section.fields.forEach((field) => assignPrefill(field, itemIndex));
+      }
+      return;
+    }
+
+    section.fields.forEach((field) => {
+      assignPrefill(field);
     });
   });
 
@@ -618,6 +647,48 @@ const initializeFormValues = (
   };
 
   return template.sections.reduce((acc, section) => {
+    if (section.repeatable) {
+      const itemCount = Math.max(section.minItems || 0, 1);
+      acc[section.id] = Array.from({ length: itemCount }, () => {
+        const itemValues: Record<string, any> = {};
+        section.fields.forEach((field) => {
+          const autoValue = getAutoPrefillValue(field, section.id);
+
+          switch (field.type) {
+            case "multi-select":
+            case "checkbox-group":
+              itemValues[field.id] = Array.isArray(autoValue)
+                ? autoValue
+                : autoValue
+                ? [autoValue]
+                : [];
+              break;
+            case "boolean":
+            case "checkbox":
+              itemValues[field.id] = Boolean(autoValue);
+              break;
+            case "number":
+              itemValues[field.id] =
+                autoValue !== undefined && autoValue !== null
+                  ? autoValue
+                  : typeof field.min === "number"
+                  ? field.min
+                  : null;
+              break;
+            case "photo":
+            case "photo-multi":
+              itemValues[field.id] = [];
+              break;
+            default:
+              itemValues[field.id] =
+                autoValue !== undefined && autoValue !== null ? autoValue : "";
+          }
+        });
+        return itemValues;
+      });
+      return acc;
+    }
+
     const sectionValues: Record<string, any> = {};
     section.fields.forEach((field) => {
       if (field.type === "table") {
@@ -761,6 +832,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const [inspectionReportUrl, setInspectionReportUrl] = useState<
     string | undefined
   >(undefined);
+  const [jobCompletionCommitted, setJobCompletionCommitted] = useState(false);
 
   const [hasInvoice, setHasInvoice] = useState(false);
   const [invoiceDescription, setInvoiceDescription] = useState("Safety inspection and compliance check for rental property");
@@ -787,6 +859,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setNotes("");
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
+    setJobCompletionCommitted(false);
     setHasInvoice(false);
     setInvoiceDescription("Gas safety inspection and compliance check for rental property");
     setLineItems([{
@@ -814,6 +887,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setNotes(__DEV__ ? DEFAULT_TEST_NOTES : "");
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
+    setJobCompletionCommitted(false);
   };
 
   useEffect(() => {
@@ -857,11 +931,47 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       setTemplates([]);
       setSelectedTemplate(null);
       setFormValues({});
+
+      if (isGasJobType(jobType)) {
+        try {
+          const jobTemplateResponse = await fetchJobInspectionTemplate(jobId);
+          const gasTemplate = jobTemplateResponse.template;
+
+          setJobDetails((prev: any) => ({
+            ...(prev || {}),
+            property: {
+              ...(prev?.property || {}),
+              ...(jobTemplateResponse.property || {}),
+            },
+            assignedTechnician: jobTemplateResponse.technician
+              ? {
+                  firstName: jobTemplateResponse.technician.firstName,
+                  lastName: jobTemplateResponse.technician.lastName,
+                  email: jobTemplateResponse.technician.email,
+                  phone: jobTemplateResponse.technician.phone,
+                  licenseNumber: jobTemplateResponse.technician.licenseNumber,
+                }
+              : prev?.assignedTechnician,
+            status: jobTemplateResponse.job?.status || prev?.status,
+            dueDate: jobTemplateResponse.job?.dueDate || prev?.dueDate,
+          }));
+
+          setTemplates([gasTemplate]);
+          applyTemplatePrefill(gasTemplate);
+          return;
+        } catch (gasTemplateError) {
+          console.warn(
+            "[JobCompletionModal] Falling back to generic template loading for gas job",
+            gasTemplateError
+          );
+        }
+      }
+
       const fetched = await fetchInspectionTemplates();
 
       // Show all templates sorted by jobType and version
       // This allows technicians to choose any template regardless of job type
-      const sortedTemplates = fetched.sort((a, b) => {
+      const sortedTemplates = [...fetched].sort((a, b) => {
         // First sort by jobType alphabetically
         const jobTypeCompare = a.jobType.localeCompare(b.jobType);
         if (jobTypeCompare !== 0) return jobTypeCompare;
@@ -989,6 +1099,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       Alert.alert("Template missing", "Select a template before submitting.");
       return;
     }
+    const gasV3Submission = isGasTemplateV3(selectedTemplate);
     const missing = validateRequiredFields(
       selectedTemplate,
       formValues,
@@ -1027,7 +1138,11 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       setIsSubmitting(true);
 
       // Validate if job can be completed BEFORE creating inspection report
-      if (!canCompleteJob()) {
+      if (
+        !jobCompletionCommitted &&
+        job?.status !== "Completed" &&
+        !canCompleteJob()
+      ) {
         const today = new Date();
         const dueDate = job ? new Date(job.dueDate) : today;
         const isNotDue = dueDate > today;
@@ -1058,32 +1173,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       let reportId = inspectionReportId;
       let reportUrl = inspectionReportUrl;
 
-      if (!reportId) {
-        console.log(
-          "[JobCompletionModal] Job validation passed. Submitting inspection report with jobId:",
-          jobId
-        );
-        console.log("[JobCompletionModal] JobId type:", typeof jobId);
-        console.log("[JobCompletionModal] JobId length:", jobId?.length);
-        console.log(
-          "[JobCompletionModal] JobId is valid ObjectId format?:",
-          /^[0-9a-fA-F]{24}$/.test(jobId)
-        );
-
-        const submission = await submitInspectionReport(jobId, {
-          template: selectedTemplate,
-          formValues,
-          mediaByField,
-          notes,
-        });
-        reportId = submission.report.id;
-        reportUrl = submission.pdf?.url;
-        setInspectionReportId(reportId);
-        setInspectionReportUrl(reportUrl);
-      }
-
       const completionPayload: JobCompletionData = {
-        inspectionReportId: reportId || undefined,
         hasInvoice,
       };
 
@@ -1109,7 +1199,41 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         } as InvoiceData;
       }
 
-      await onSubmit(completionPayload);
+      if (gasV3Submission) {
+        if (!jobCompletionCommitted && job?.status !== "Completed") {
+          await onSubmit(completionPayload);
+          setJobCompletionCommitted(true);
+        }
+
+        if (!reportId) {
+          const submission = await submitInspectionReport(jobId, {
+            template: selectedTemplate,
+            formValues,
+            mediaByField,
+            notes,
+          });
+          reportId = submission.report.id;
+          reportUrl = submission.pdf?.url;
+          setInspectionReportId(reportId);
+          setInspectionReportUrl(reportUrl);
+        }
+      } else {
+        if (!reportId) {
+          const submission = await submitInspectionReport(jobId, {
+            template: selectedTemplate,
+            formValues,
+            mediaByField,
+            notes,
+          });
+          reportId = submission.report.id;
+          reportUrl = submission.pdf?.url;
+          setInspectionReportId(reportId);
+          setInspectionReportUrl(reportUrl);
+        }
+
+        completionPayload.inspectionReportId = reportId || undefined;
+        await onSubmit(completionPayload);
+      }
 
       Alert.alert(
         "Success",
@@ -1123,7 +1247,9 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       console.error("Job completion failed", error);
       Alert.alert(
         "Unable to complete job",
-        error?.message || "Please try again."
+        gasV3Submission && jobCompletionCommitted
+          ? `The job was completed, but the gas report submission failed. ${error?.message || "Please retry the report submission."}`
+          : error?.message || "Please try again."
       );
     } finally {
       setIsSubmitting(false);
@@ -1137,33 +1263,133 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const handleValueChange = (
     sectionId: string,
     fieldId: string,
-    value: any
+    value: any,
+    itemIndex?: number
   ) => {
-    setFormValues((prev) => ({
+    setFormValues((prev) => {
+      if (itemIndex === undefined) {
+        return {
+          ...prev,
+          [sectionId]: {
+            ...(prev[sectionId] || {}),
+            [fieldId]: value,
+          },
+        };
+      }
+
+      const currentItems = Array.isArray(prev[sectionId]) ? prev[sectionId] : [];
+      const nextItems = currentItems.map((item, index) =>
+        index === itemIndex ? { ...(item || {}), [fieldId]: value } : item
+      );
+
+      return {
+        ...prev,
+        [sectionId]: nextItems,
+      };
+    });
+    setInspectionReportId(null);
+    setInspectionReportUrl(undefined);
+  };
+
+  const handleAddMedia = (
+    sectionId: string,
+    fieldId: string,
+    media: InspectionMediaUpload,
+    itemIndex?: number
+  ) => {
+    const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
+    setMediaByField((prev) => ({
       ...prev,
-      [sectionId]: {
-        ...(prev[sectionId] || {}),
-        [fieldId]: value,
-      },
+      [storageKey]: [...(prev[storageKey] || []), media],
     }));
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
   };
 
-  const handleAddMedia = (fieldId: string, media: InspectionMediaUpload) => {
+  const handleRemoveMedia = (
+    sectionId: string,
+    fieldId: string,
+    index: number,
+    itemIndex?: number
+  ) => {
+    const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
     setMediaByField((prev) => ({
       ...prev,
-      [fieldId]: [...(prev[fieldId] || []), media],
+      [storageKey]: (prev[storageKey] || []).filter((_, i) => i !== index),
     }));
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
   };
 
-  const handleRemoveMedia = (fieldId: string, index: number) => {
-    setMediaByField((prev) => ({
-      ...prev,
-      [fieldId]: (prev[fieldId] || []).filter((_, i) => i !== index),
-    }));
+  const handleAddRepeatableItem = (sectionId: string) => {
+    const section = selectedTemplate?.sections.find((entry) => entry.id === sectionId);
+    if (!section?.repeatable) {
+      return;
+    }
+
+    setFormValues((prev) => {
+      const currentItems = Array.isArray(prev[sectionId]) ? prev[sectionId] : [];
+      const newItem = section.fields.reduce((acc: Record<string, any>, field) => {
+        if (field.type === "multi-select" || field.type === "checkbox-group") {
+          acc[field.id] = [];
+        } else if (field.type === "boolean" || field.type === "checkbox") {
+          acc[field.id] = false;
+        } else if (field.type === "photo" || field.type === "photo-multi") {
+          acc[field.id] = [];
+        } else {
+          acc[field.id] = "";
+        }
+        return acc;
+      }, {});
+
+      return {
+        ...prev,
+        [sectionId]: [...currentItems, newItem],
+      };
+    });
+    setInspectionReportId(null);
+    setInspectionReportUrl(undefined);
+  };
+
+  const handleRemoveRepeatableItem = (sectionId: string, itemIndex: number) => {
+    const section = selectedTemplate?.sections.find((entry) => entry.id === sectionId);
+    const minimumItems = section?.minItems || 0;
+
+    setFormValues((prev) => {
+      const currentItems = Array.isArray(prev[sectionId]) ? prev[sectionId] : [];
+      if (currentItems.length <= minimumItems) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [sectionId]: currentItems.filter((_: any, index: number) => index !== itemIndex),
+      };
+    });
+
+    setMediaByField((prev) => {
+      const next = { ...prev };
+      Object.keys(prev).forEach((key) => {
+        const match = key.match(new RegExp(`^${sectionId}__(\\d+)__(.+)$`));
+        if (!match) {
+          return;
+        }
+
+        const keyIndex = Number(match[1]);
+        const fieldId = match[2];
+        if (keyIndex === itemIndex) {
+          delete next[key];
+          return;
+        }
+        if (keyIndex > itemIndex) {
+          const nextKey = getMediaStorageKey(sectionId, fieldId, keyIndex - 1);
+          next[nextKey] = prev[key];
+          delete next[key];
+        }
+      });
+      return next;
+    });
+
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
   };
@@ -1363,7 +1589,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         size={20}
                         color={
                           bedroomCount <= 1
-                            ? theme.disabled
+                            ? theme.textTertiary
                             : theme.textSecondary
                         }
                       />
@@ -1386,7 +1612,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         size={20}
                         color={
                           bedroomCount >= 20
-                            ? theme.disabled
+                            ? theme.textTertiary
                             : theme.textSecondary
                         }
                       />
@@ -1422,7 +1648,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         size={20}
                         color={
                           bathroomCount <= 1
-                            ? theme.disabled
+                            ? theme.textTertiary
                             : theme.textSecondary
                         }
                       />
@@ -1445,7 +1671,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         size={20}
                         color={
                           bathroomCount >= 10
-                            ? theme.disabled
+                            ? theme.textTertiary
                             : theme.textSecondary
                         }
                       />
@@ -1488,6 +1714,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
               onChange={handleValueChange}
               onAddMedia={handleAddMedia}
               onRemoveMedia={handleRemoveMedia}
+              onAddRepeatableItem={handleAddRepeatableItem}
+              onRemoveRepeatableItem={handleRemoveRepeatableItem}
               notes={notes}
               onNotesChange={(val) => {
                 setNotes(val);
@@ -1549,7 +1777,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
               <Switch
                 value={hasInvoice}
                 onValueChange={setHasInvoice}
-                trackColor={{ false: theme.disabled, true: theme.primary }}
+                trackColor={{ false: theme.textTertiary, true: theme.primary }}
                 thumbColor={hasInvoice ? theme.surface : theme.textSecondary}
               />
             </View>
@@ -1937,51 +2165,99 @@ const validateRequiredFields = (
   media: Record<string, InspectionMediaUpload[]>
 ): string[] => {
   const missing: string[] = [];
-  template.sections.forEach((section) => {
-    const sectionValues = values[section.id] || {};
-    section.fields.forEach((field) => {
-      if (!field.required) return;
-      const label = getFieldLabel(field);
-      const value = sectionValues[field.id];
-      if (field.type === "photo" || field.type === "photo-multi") {
-        const attachments = media[field.id] || [];
-        if (!attachments.length) {
-          missing.push(label);
-        }
+  const isFieldVisible = (
+    field: InspectionField,
+    scopeValues: Record<string, any>
+  ) => {
+    const visibleWhen = field.metadata?.visibleWhen;
+    if (!visibleWhen) {
+      return true;
+    }
+    if (visibleWhen.equals !== undefined) {
+      return scopeValues?.[visibleWhen.fieldId] === visibleWhen.equals;
+    }
+    return true;
+  };
+
+  const validateFieldValue = (
+    sectionId: string,
+    field: InspectionField,
+    scopeValues: Record<string, any>,
+    itemIndex?: number
+  ) => {
+    if (!field.required || field.metadata?.readOnly || field.metadata?.systemCalculated) {
+      return;
+    }
+    if (!isFieldVisible(field, scopeValues)) {
+      return;
+    }
+
+    const labelPrefix =
+      itemIndex === undefined
+        ? getFieldLabel(field)
+        : `${template.sections.find((section) => section.id === sectionId)?.itemLabel || "Item"} ${itemIndex + 1}: ${getFieldLabel(field)}`;
+    const value = scopeValues[field.id];
+
+    if (field.type === "photo" || field.type === "photo-multi") {
+      const attachments = media[getMediaStorageKey(sectionId, field.id, itemIndex)] || [];
+      if (!attachments.length) {
+        missing.push(labelPrefix);
+      }
+      return;
+    }
+
+    if (field.type === "table") {
+      const rows = Array.isArray(value) ? value : [];
+      if (!rows.length) {
+        missing.push(labelPrefix);
         return;
       }
-      if (field.type === "table") {
-        const rows = Array.isArray(value) ? value : [];
-        if (!rows.length) {
-          missing.push(label);
-          return;
-        }
-        const requiredColumns = field.columns?.filter(
-          (column) => column.required
+      const requiredColumns = field.columns?.filter((column) => column.required);
+      if (requiredColumns && requiredColumns.length) {
+        const hasIncompleteRow = rows.some((row: Record<string, any>) =>
+          requiredColumns.some(
+            (column) =>
+              row[column.id] === undefined ||
+              row[column.id] === null ||
+              row[column.id] === ""
+          )
         );
-        if (requiredColumns && requiredColumns.length) {
-          const hasIncompleteRow = rows.some((row: Record<string, any>) =>
-            requiredColumns.some(
-              (column) =>
-                row[column.id] === undefined ||
-                row[column.id] === null ||
-                row[column.id] === ""
-            )
-          );
-          if (hasIncompleteRow) {
-            missing.push(`${label} (complete required columns)`);
-            return;
-          }
+        if (hasIncompleteRow) {
+          missing.push(`${labelPrefix} (complete required columns)`);
         }
       }
-      if (value === undefined || value === null || value === "") {
-        missing.push(label);
+      return;
+    }
+
+    if (value === undefined || value === null || value === "") {
+      missing.push(labelPrefix);
+      return;
+    }
+    if (Array.isArray(value) && value.length === 0) {
+      missing.push(labelPrefix);
+    }
+  };
+
+  template.sections.forEach((section) => {
+    if (section.repeatable) {
+      const items = Array.isArray(values[section.id]) ? values[section.id] : [];
+      if (!items.length && (section.minItems || 0) > 0) {
+        missing.push(section.title);
         return;
       }
-      if (Array.isArray(value) && value.length === 0) {
-        missing.push(label);
-      }
-    });
+
+      items.forEach((item: Record<string, any>, itemIndex: number) => {
+        section.fields.forEach((field) =>
+          validateFieldValue(section.id, field, item || {}, itemIndex)
+        );
+      });
+      return;
+    }
+
+    const sectionValues = values[section.id] || {};
+    section.fields.forEach((field) =>
+      validateFieldValue(section.id, field, sectionValues)
+    );
   });
   return missing;
 };

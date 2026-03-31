@@ -163,6 +163,11 @@ export type InspectionSection = {
   id: string;
   title: string;
   description?: string;
+  repeatable?: boolean;
+  minItems?: number;
+  addButtonLabel?: string;
+  itemLabel?: string;
+  metadata?: Record<string, any>;
   fields: InspectionField[];
 };
 
@@ -184,6 +189,32 @@ export type InspectionTemplateResponse = {
   sections: InspectionSection[];
 };
 
+export type JobInspectionTemplateResponse = {
+  template: InspectionTemplate;
+  job: {
+    id: string;
+    job_id: string;
+    jobType: string;
+    status: string;
+    dueDate: string;
+  };
+  property: {
+    id: string;
+    address?: Job["property"]["address"];
+    propertyType?: string;
+    bedroomCount?: number;
+    bathroomCount?: number;
+  } | null;
+  technician: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    licenseNumber?: string;
+  } | null;
+};
+
 export type InspectionMediaUpload = {
   uri: string;
   name: string;
@@ -193,7 +224,7 @@ export type InspectionMediaUpload = {
 
 export type InspectionSubmissionPayload = {
   template: InspectionTemplate;
-  formValues: Record<string, Record<string, any>>;
+  formValues: Record<string, any>;
   mediaByField: Record<string, InspectionMediaUpload[]>;
   notes?: string;
 };
@@ -269,6 +300,64 @@ export const fetchInspectionTemplate = async (
   return json.data as InspectionTemplate;
 };
 
+export const fetchJobInspectionTemplate = async (
+  jobId: string
+): Promise<JobInspectionTemplateResponse> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  const res = await fetch(`${baseUrl}/api/v1/inspections/jobs/${jobId}/template`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.message || "Failed to load job inspection template");
+  }
+
+  return json.data as JobInspectionTemplateResponse;
+};
+
+export const getMediaStorageKey = (
+  sectionId: string,
+  fieldId: string,
+  itemIndex?: number
+) => {
+  if (itemIndex === undefined) {
+    return fieldId;
+  }
+  return `${sectionId}__${itemIndex}__${fieldId}`;
+};
+
+const isGasV3Template = (template: InspectionTemplate) =>
+  template.jobType === "Gas" &&
+  Array.isArray(template.sections) &&
+  template.sections.some(
+    (section) => section.id === "gas-appliances" && section.repeatable
+  );
+
+const normalizeSubmissionFormData = (
+  template: InspectionTemplate,
+  formValues: Record<string, any>
+) => {
+  const normalized = JSON.parse(JSON.stringify(formValues || {}));
+
+  if (isGasV3Template(template)) {
+    if (normalized["final-declaration"]) {
+      delete normalized["final-declaration"]["final-compliance-outcome"];
+    }
+    if (normalized["compliance-assessment"]) {
+      delete normalized["compliance-assessment"]["overall-assessment"];
+    }
+  }
+
+  return normalized;
+};
+
 export const submitInspectionReport = async (
   jobId: string,
   payload: InspectionSubmissionPayload
@@ -286,7 +375,11 @@ export const submitInspectionReport = async (
   const formData = new FormData();
   formData.append("jobType", payload.template.jobType);
   formData.append("templateVersion", String(payload.template.version));
-  formData.append("formData", JSON.stringify(payload.formValues));
+  const normalizedFormData = normalizeSubmissionFormData(
+    payload.template,
+    payload.formValues
+  );
+  formData.append("formData", JSON.stringify(normalizedFormData));
 
   if (payload.notes) {
     formData.append("notes", payload.notes);
@@ -294,26 +387,62 @@ export const submitInspectionReport = async (
 
   const mediaMeta: Record<string, any> = {};
   payload.template.sections.forEach((section) => {
-    section.fields.forEach((field) => {
-      const items = payload.mediaByField[field.id];
-      if (items && items.length) {
-        const fieldLabel = field.question || field.label || field.id;
-        mediaMeta[field.id] = {
-          label: fieldLabel,
-          metadata: {
-            sectionId: section.id,
-            count: items.length,
-          },
-        };
+    const appendMedia = (
+      uploadFieldId: string,
+      field: InspectionField,
+      items: InspectionMediaUpload[],
+      metadata: Record<string, any>
+    ) => {
+      const fieldLabel = field.question || field.label || field.id;
+      mediaMeta[uploadFieldId] = {
+        label: fieldLabel,
+        metadata: {
+          ...metadata,
+          count: items.length,
+        },
+      };
 
-        items.forEach((item, index) => {
-          formData.append(`media__${field.id}`, {
-            uri: item.uri,
-            name:
-              item.name ||
-              `${field.id}-${index + 1}.${item.type?.split("/").pop()}`,
-            type: item.type || "image/jpeg",
-          } as any);
+      items.forEach((item, index) => {
+        formData.append(`media__${uploadFieldId}`, {
+          uri: item.uri,
+          name:
+            item.name ||
+            `${uploadFieldId}-${index + 1}.${item.type?.split("/").pop()}`,
+          type: item.type || "image/jpeg",
+        } as any);
+      });
+    };
+
+    if (section.repeatable) {
+      const sectionItems = Array.isArray(payload.formValues[section.id])
+        ? payload.formValues[section.id]
+        : [];
+
+      sectionItems.forEach((_, itemIndex) => {
+        section.fields.forEach((field) => {
+          const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
+          const items = payload.mediaByField[storageKey];
+          if (!items?.length) {
+            return;
+          }
+
+          appendMedia(`${field.id}-${itemIndex}`, field, items, {
+            sectionId: section.id,
+            fieldId: field.id,
+            itemIndex,
+          });
+        });
+      });
+      return;
+    }
+
+    section.fields.forEach((field) => {
+      const storageKey = getMediaStorageKey(section.id, field.id);
+      const items = payload.mediaByField[storageKey];
+      if (items && items.length) {
+        appendMedia(field.id, field, items, {
+          sectionId: section.id,
+          fieldId: field.id,
         });
       }
     });

@@ -20,9 +20,10 @@ import type {
   InspectionField,
   InspectionMediaUpload,
   InspectionTableColumn,
-} from "@services/jobs";
+} from "../services/jobs";
+import { getMediaStorageKey } from "../services/jobs";
 
-export type InspectionFormValues = Record<string, Record<string, any>>;
+export type InspectionFormValues = Record<string, any>;
 
 const resolveFieldLabel = (field: InspectionField): string => {
   const fromQuestion = field.question?.trim();
@@ -117,7 +118,7 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
           styles.datePickerButton,
           {
             borderColor: theme.border,
-            backgroundColor: editable ? theme.surface || theme.card : theme.disabled
+            backgroundColor: editable ? theme.surface || theme.card : theme.textTertiary
           }
         ]}
         onPress={handlePress}
@@ -176,9 +177,26 @@ interface InspectionFormProps {
   template: InspectionTemplate;
   values: InspectionFormValues;
   mediaByField: Record<string, InspectionMediaUpload[]>;
-  onChange: (sectionId: string, fieldId: string, value: any) => void;
-  onAddMedia: (fieldId: string, media: InspectionMediaUpload) => void;
-  onRemoveMedia: (fieldId: string, index: number) => void;
+  onChange: (
+    sectionId: string,
+    fieldId: string,
+    value: any,
+    itemIndex?: number
+  ) => void;
+  onAddMedia: (
+    sectionId: string,
+    fieldId: string,
+    media: InspectionMediaUpload,
+    itemIndex?: number
+  ) => void;
+  onRemoveMedia: (
+    sectionId: string,
+    fieldId: string,
+    index: number,
+    itemIndex?: number
+  ) => void;
+  onAddRepeatableItem: (sectionId: string) => void;
+  onRemoveRepeatableItem: (sectionId: string, itemIndex: number) => void;
   notes: string;
   onNotesChange: (val: string) => void;
   editable?: boolean;
@@ -191,6 +209,8 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
   onChange,
   onAddMedia,
   onRemoveMedia,
+  onAddRepeatableItem,
+  onRemoveRepeatableItem,
   notes,
   onNotesChange,
   editable = true,
@@ -200,11 +220,57 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
   const [currentSignatureField, setCurrentSignatureField] = useState<{
     sectionId: string;
     fieldId: string;
+    itemIndex?: number;
   } | null>(null);
 
-  const handlePickImage = async (
+  const getScopedValues = (sectionId: string, itemIndex?: number) => {
+    const sectionValues = values[sectionId];
+    if (itemIndex === undefined) {
+      return sectionValues || {};
+    }
+    if (!Array.isArray(sectionValues)) {
+      return {};
+    }
+    return sectionValues[itemIndex] || {};
+  };
+
+  const isFieldVisible = (
     field: InspectionField,
-    currentCount: number
+    scopeValues: Record<string, any>
+  ) => {
+    const visibleWhen = field.metadata?.visibleWhen;
+    if (!visibleWhen) {
+      return true;
+    }
+
+    const dependencyValue = scopeValues?.[visibleWhen.fieldId];
+    if (visibleWhen.equals !== undefined) {
+      return dependencyValue === visibleWhen.equals;
+    }
+    return true;
+  };
+
+  const isFieldReadOnly = (field: InspectionField) =>
+    !editable || !!field.metadata?.readOnly || !!field.metadata?.systemCalculated;
+
+  const getReadOnlyValue = (field: InspectionField, value: any) => {
+    if (value === null || value === undefined || value === "") {
+      return field.metadata?.systemCalculated
+        ? "Calculated on submission"
+        : "No value";
+    }
+    if (Array.isArray(value)) {
+      return value.join(", ");
+    }
+    const optionLabel = field.options?.find((option) => option.value === value)?.label;
+    return optionLabel || String(value);
+  };
+
+  const handlePickImage = async (
+    sectionId: string,
+    field: InspectionField,
+    currentCount: number,
+    itemIndex?: number
   ) => {
     console.log("[InspectionForm] handlePickImage called for field:", field.id, "currentCount:", currentCount);
 
@@ -224,14 +290,14 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           text: "Camera",
           onPress: () => {
             console.log("[InspectionForm] Camera option selected");
-            handleCameraLaunch(field);
+            handleCameraLaunch(sectionId, field, itemIndex);
           },
         },
         {
           text: "Photo Library",
           onPress: () => {
             console.log("[InspectionForm] Photo Library option selected");
-            handlePhotoLibraryLaunch(field);
+            handlePhotoLibraryLaunch(sectionId, field, itemIndex);
           },
         },
         {
@@ -245,7 +311,11 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     );
   };
 
-  const handleCameraLaunch = async (field: InspectionField) => {
+  const handleCameraLaunch = async (
+    sectionId: string,
+    field: InspectionField,
+    itemIndex?: number
+  ) => {
     try {
       console.log("[InspectionForm] Camera launch initiated for field:", field.id);
 
@@ -281,7 +351,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           size: asset.fileSize,
         };
         console.log("[InspectionForm] Adding media:", media);
-        onAddMedia(field.id, media);
+        onAddMedia(sectionId, field.id, media, itemIndex);
       }
     } catch (error) {
       console.error("[InspectionForm] Camera error:", error);
@@ -289,7 +359,11 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     }
   };
 
-  const handlePhotoLibraryLaunch = async (field: InspectionField) => {
+  const handlePhotoLibraryLaunch = async (
+    sectionId: string,
+    field: InspectionField,
+    itemIndex?: number
+  ) => {
     try {
       console.log("[InspectionForm] Photo library launch initiated for field:", field.id);
 
@@ -326,7 +400,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           size: asset.fileSize,
         };
         console.log("[InspectionForm] Adding media:", media);
-        onAddMedia(field.id, media);
+        onAddMedia(sectionId, field.id, media, itemIndex);
       }
     } catch (error) {
       console.error("[InspectionForm] Photo library error:", error);
@@ -334,26 +408,36 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     }
   };
 
-  const toggleBoolean = (sectionId: string, fieldId: string, current: boolean) => {
-    onChange(sectionId, fieldId, !current);
+  const toggleBoolean = (
+    sectionId: string,
+    fieldId: string,
+    current: boolean,
+    itemIndex?: number
+  ) => {
+    onChange(sectionId, fieldId, !current, itemIndex);
   };
 
   const toggleMultiSelect = (
     sectionId: string,
     field: InspectionField,
-    optionValue: string
+    optionValue: string,
+    itemIndex?: number
   ) => {
-    const current = values[sectionId]?.[field.id] || [];
+    const current = getScopedValues(sectionId, itemIndex)?.[field.id] || [];
     const exists = current.includes(optionValue);
     const nextValue = exists
       ? current.filter((val: string) => val !== optionValue)
       : [...current, optionValue];
-    onChange(sectionId, field.id, nextValue);
+    onChange(sectionId, field.id, nextValue, itemIndex);
   };
 
-  const handleOpenSignature = (sectionId: string, fieldId: string) => {
+  const handleOpenSignature = (
+    sectionId: string,
+    fieldId: string,
+    itemIndex?: number
+  ) => {
     if (!editable) return;
-    setCurrentSignatureField({ sectionId, fieldId });
+    setCurrentSignatureField({ sectionId, fieldId, itemIndex });
     setSignatureModalVisible(true);
   };
 
@@ -362,16 +446,21 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       onChange(
         currentSignatureField.sectionId,
         currentSignatureField.fieldId,
-        base64Signature
+        base64Signature,
+        currentSignatureField.itemIndex
       );
     }
     setSignatureModalVisible(false);
     setCurrentSignatureField(null);
   };
 
-  const handleClearSignature = (sectionId: string, fieldId: string) => {
+  const handleClearSignature = (
+    sectionId: string,
+    fieldId: string,
+    itemIndex?: number
+  ) => {
     if (!editable) return;
-    onChange(sectionId, fieldId, null);
+    onChange(sectionId, fieldId, null, itemIndex);
   };
 
   const renderTableField = (sectionId: string, field: InspectionField) => {
@@ -569,10 +658,30 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     );
   };
 
-  const renderField = (sectionId: string, field: InspectionField) => {
-    const sectionValues = values[sectionId] || {};
+  const renderField = (
+    sectionId: string,
+    field: InspectionField,
+    itemIndex?: number
+  ) => {
+    const sectionValues = getScopedValues(sectionId, itemIndex);
     const fieldValue = sectionValues[field.id];
-    const mediaForField = mediaByField[field.id] || [];
+    const mediaKey = getMediaStorageKey(sectionId, field.id, itemIndex);
+    const mediaForField = mediaByField[mediaKey] || [];
+    const readOnly = isFieldReadOnly(field);
+
+    if (!isFieldVisible(field, sectionValues)) {
+      return null;
+    }
+
+    if (readOnly && field.type !== "signature") {
+      return (
+        <View style={[styles.readOnlyContainer, { borderColor: theme.border }]}>
+          <Text style={[styles.readOnlyText, { color: theme.textSecondary }]}>
+            {getReadOnlyValue(field, fieldValue)}
+          </Text>
+        </View>
+      );
+    }
 
     switch (field.type) {
       case "text":
@@ -581,12 +690,12 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           <TextInput
             style={[styles.textInput, { borderColor: theme.border, color: theme.text }]}
             value={fieldValue ?? ""}
-            onChangeText={(text) => onChange(sectionId, field.id, text)}
+            onChangeText={(text) => onChange(sectionId, field.id, text, itemIndex)}
             placeholder={field.placeholder || "Enter value"}
             placeholderTextColor={theme.placeholder}
             multiline={field.type === "textarea"}
             numberOfLines={field.type === "textarea" ? 4 : 1}
-            editable={editable}
+            editable={!readOnly}
           />
         );
       case "number":
@@ -596,12 +705,29 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
             value={fieldValue !== undefined ? String(fieldValue) : ""}
             onChangeText={(text) => {
               const numeric = text === "" ? null : Number(text.replace(/[^0-9.-]/g, ""));
-              onChange(sectionId, field.id, isNaN(numeric as number) ? null : numeric);
+              onChange(
+                sectionId,
+                field.id,
+                isNaN(numeric as number) ? null : numeric,
+                itemIndex
+              );
             }}
             keyboardType="numeric"
             placeholder={field.placeholder || "0"}
             placeholderTextColor={theme.placeholder}
-            editable={editable}
+            editable={!readOnly}
+          />
+        );
+      case "time":
+        return (
+          <TextInput
+            style={[styles.textInput, { borderColor: theme.border, color: theme.text }]}
+            value={fieldValue ?? ""}
+            onChangeText={(text) => onChange(sectionId, field.id, text, itemIndex)}
+            placeholder={field.placeholder || "HH:MM"}
+            placeholderTextColor={theme.placeholder}
+            keyboardType="numbers-and-punctuation"
+            editable={!readOnly}
           />
         );
       case "boolean":
@@ -609,10 +735,12 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           <View style={styles.booleanRow}>
             <Switch
               value={!!fieldValue}
-              onValueChange={() => toggleBoolean(sectionId, field.id, !!fieldValue)}
-              trackColor={{ false: theme.disabled, true: theme.primary }}
+              onValueChange={() =>
+                toggleBoolean(sectionId, field.id, !!fieldValue, itemIndex)
+              }
+              trackColor={{ false: theme.textTertiary, true: theme.primary }}
               thumbColor={!!fieldValue ? theme.surface : theme.textSecondary}
-              disabled={!editable}
+              disabled={readOnly}
             />
             <Text style={[styles.booleanLabel, { color: theme.textSecondary }]}>
               {fieldValue ? "Yes" : "No"}
@@ -636,8 +764,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                         : theme.card,
                     },
                   ]}
-                  onPress={() => editable && onChange(sectionId, field.id, option.value)}
-                  disabled={!editable}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
                 >
                   <Text
                     style={{
@@ -670,8 +800,11 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                         : theme.card,
                     },
                   ]}
-                  onPress={() => editable && toggleMultiSelect(sectionId, field, option.value)}
-                  disabled={!editable}
+                  onPress={() =>
+                    !readOnly &&
+                    toggleMultiSelect(sectionId, field, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
                 >
                   <Text
                     style={{
@@ -706,8 +839,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                         : theme.card,
                     },
                   ]}
-                  onPress={() => editable && onChange(sectionId, field.id, option.value)}
-                  disabled={!editable}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
                 >
                   <Text
                     style={{
@@ -743,8 +878,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                         : theme.card,
                     },
                   ]}
-                  onPress={() => editable && onChange(sectionId, field.id, option.value)}
-                  disabled={!editable}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
                 >
                   <Text
                     style={{
@@ -783,8 +920,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                         : theme.card,
                     },
                   ]}
-                  onPress={() => editable && onChange(sectionId, field.id, option.value)}
-                  disabled={!editable}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
                 >
                   <Text
                     style={{
@@ -803,16 +942,16 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
         return (
           <DatePickerField
             value={fieldValue}
-            onChange={(date) => onChange(sectionId, field.id, date)}
+            onChange={(date) => onChange(sectionId, field.id, date, itemIndex)}
             placeholder={field.placeholder || "Select date"}
-            editable={editable}
+            editable={!readOnly}
             theme={theme}
           />
         );
       case "signature":
         return (
           <View style={styles.signatureContainer}>
-            <View style={[styles.signatureBox, { borderColor: theme.border }]}>
+            <View style={[styles.signatureBox, { borderColor: theme.border }]}> 
               {fieldValue ? (
                 <View style={styles.signaturePresent}>
                   <Image
@@ -820,10 +959,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                     style={styles.signatureImage}
                     resizeMode="contain"
                   />
-                  {editable && (
+                  {!readOnly && (
                     <TouchableOpacity
                       style={[styles.signatureRemoveButton, { backgroundColor: theme.error }]}
-                      onPress={() => handleClearSignature(sectionId, field.id)}
+                      onPress={() => handleClearSignature(sectionId, field.id, itemIndex)}
                     >
                       <MaterialCommunityIcons name="close" size={16} color="white" />
                     </TouchableOpacity>
@@ -832,22 +971,22 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
               ) : (
                 <TouchableOpacity
                   style={styles.signatureButton}
-                  onPress={() => handleOpenSignature(sectionId, field.id)}
-                  disabled={!editable}
+                  onPress={() => handleOpenSignature(sectionId, field.id, itemIndex)}
+                  disabled={readOnly}
                 >
                   <MaterialCommunityIcons
                     name="draw"
                     size={24}
                     color={theme.primary}
                   />
-                  <Text style={[styles.signatureButtonText, { color: theme.primary }]}>
+                  <Text style={[styles.signatureButtonText, { color: theme.primary }]}> 
                     Tap to Sign
                   </Text>
                 </TouchableOpacity>
               )}
             </View>
             {field.helpText && (
-              <Text style={[styles.helpText, { color: theme.textSecondary }]}>
+              <Text style={[styles.helpText, { color: theme.textSecondary }]}> 
                 {field.helpText}
               </Text>
             )}
@@ -864,10 +1003,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
               {mediaForField.map((item, index) => (
                 <View key={`${item.uri}-${index}`} style={styles.mediaThumb}>
                   <Image source={{ uri: item.uri }} style={styles.mediaImage} />
-                  {editable && (
+                  {!readOnly && (
                     <TouchableOpacity
                       style={styles.mediaRemove}
-                      onPress={() => onRemoveMedia(field.id, index)}
+                      onPress={() => onRemoveMedia(sectionId, field.id, index, itemIndex)}
                     >
                       <MaterialCommunityIcons
                         name="close-circle"
@@ -878,10 +1017,12 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                   )}
                 </View>
               ))}
-              {editable && (
+              {!readOnly && (
                 <TouchableOpacity
                   style={[styles.mediaAddButton, { borderColor: theme.border }]}
-                  onPress={() => handlePickImage(field, mediaForField.length)}
+                  onPress={() =>
+                    handlePickImage(sectionId, field, mediaForField.length, itemIndex)
+                  }
                   disabled={!canAdd}
                 >
                   <MaterialCommunityIcons
@@ -907,10 +1048,12 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
             <TouchableOpacity
               style={[
                 styles.checkboxRow,
-                !editable && styles.disabled
+                readOnly && styles.disabled
               ]}
-              onPress={() => editable && onChange(sectionId, field.id, !booleanValue)}
-              disabled={!editable}
+              onPress={() =>
+                !readOnly && onChange(sectionId, field.id, !booleanValue, itemIndex)
+              }
+              disabled={readOnly}
             >
               <View style={[
                 styles.checkboxContainer,
@@ -957,16 +1100,16 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                   key={option.value}
                   style={[
                     styles.checkboxRow,
-                    !editable && styles.disabled
+                    readOnly && styles.disabled
                   ]}
                   onPress={() => {
-                    if (!editable) return;
+                    if (readOnly) return;
                     const newValue = isSelected
                       ? groupValue.filter(v => v !== option.value)
                       : [...groupValue, option.value];
-                    onChange(sectionId, field.id, newValue);
+                    onChange(sectionId, field.id, newValue, itemIndex);
                   }}
-                  disabled={!editable}
+                  disabled={readOnly}
                 >
                   <View style={[
                     styles.checkboxContainer,
@@ -984,7 +1127,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                   <Text style={[
                     styles.checkboxLabel,
                     { color: theme.text },
-                    !editable && { color: theme.textSecondary }
+                    readOnly && { color: theme.textSecondary }
                   ]}>
                     {option.label}
                   </Text>
@@ -999,9 +1142,93 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
           </View>
         );
       }
+      case "radio":
+        return (
+          <View style={styles.fieldContainer}>
+            <Text style={[styles.fieldLabel, { color: theme.text }]}> 
+              {field.label}
+              {field.required && <Text style={{ color: theme.error }}> *</Text>}
+            </Text>
+            {field.options?.map((option) => {
+              const isSelected = fieldValue === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.radioRow,
+                    readOnly && styles.disabled
+                  ]}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
+                >
+                  <View style={[
+                    styles.radioContainer,
+                    { borderColor: theme.border },
+                    isSelected && { backgroundColor: theme.primary, borderColor: theme.primary }
+                  ]}>
+                    {isSelected && (
+                      <View style={styles.radioInner} />
+                    )}
+                  </View>
+                  <Text style={[
+                    styles.radioLabel,
+                    { color: theme.text },
+                    readOnly && { color: theme.textSecondary }
+                  ]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            {field.helpText && (
+              <Text style={[styles.helpText, { color: theme.textSecondary }]}> 
+                {field.helpText}
+              </Text>
+            )}
+          </View>
+        );
+      case "pass-fail-na":
+        return (
+          <View style={styles.optionList}>
+            {[
+              { value: "pass", label: "Pass" },
+              { value: "fail", label: "Fail" },
+              { value: "na", label: "N/A" },
+            ].map((option) => {
+              const isSelected = fieldValue === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.optionChip,
+                    {
+                      borderColor: isSelected ? theme.primary : theme.border,
+                      backgroundColor: isSelected ? theme.primary : theme.card,
+                    },
+                  ]}
+                  onPress={() =>
+                    !readOnly && onChange(sectionId, field.id, option.value, itemIndex)
+                  }
+                  disabled={readOnly}
+                >
+                  <Text
+                    style={{
+                      color: isSelected ? "#fff" : theme.text,
+                      fontWeight: isSelected ? "600" : "500",
+                    }}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        );
       default:
         return (
-          <Text style={[styles.unsupported, { color: theme.textSecondary }]}>
+          <Text style={[styles.unsupported, { color: theme.textSecondary }]}> 
             {`Field type "${field.type}" is not yet supported on mobile.`}
           </Text>
         );
@@ -1010,20 +1237,15 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
   return (
     <View>
-      {template.sections.map((section) => (
-        <View
-          key={section.id}
-          style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-        >
-          <Text style={[styles.sectionTitle, { color: theme.text }]}> {section.title} </Text>
-          {section.description ? (
-            <Text style={[styles.sectionDescription, { color: theme.textSecondary }]}>
-              {section.description}
-            </Text>
-          ) : null}
+      {template.sections.map((section) => {
+        const renderFieldBlock = (field: InspectionField, itemIndex?: number) => {
+          const scopeValues = getScopedValues(section.id, itemIndex);
+          if (!isFieldVisible(field, scopeValues)) {
+            return null;
+          }
 
-          {section.fields.map((field) => (
-            <View key={field.id} style={styles.fieldBlock}>
+          return (
+            <View key={`${field.id}-${itemIndex ?? "base"}`} style={styles.fieldBlock}>
               <View style={styles.fieldLabelRow}>
                 <Text style={[styles.fieldLabel, { color: theme.text }]}>
                   {resolveFieldLabel(field)}
@@ -1035,11 +1257,96 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
                   {field.helpText}
                 </Text>
               ) : null}
-              {renderField(section.id, field)}
+              {renderField(section.id, field, itemIndex)}
             </View>
-          ))}
-        </View>
-      ))}
+          );
+        };
+
+        const repeatableItems = Array.isArray(values[section.id]) ? values[section.id] : [];
+
+        return (
+          <View
+            key={section.id}
+            style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+          >
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>{section.title}</Text>
+            {section.description ? (
+              <Text style={[styles.sectionDescription, { color: theme.textSecondary }]}>
+                {section.description}
+              </Text>
+            ) : null}
+
+            {section.repeatable ? (
+              <View style={styles.repeatableSection}>
+                {repeatableItems.map((item, itemIndex) => {
+                  const summaryFieldId = section.metadata?.summaryFieldId;
+                  const summaryValue = summaryFieldId ? item?.[summaryFieldId] : null;
+                  const minimumItems = section.minItems || 0;
+                  const canRemove = editable && repeatableItems.length > minimumItems;
+
+                  return (
+                    <View
+                      key={`${section.id}-${itemIndex}`}
+                      style={[styles.repeatableCard, { borderColor: theme.border }]}
+                    >
+                      <View style={styles.repeatableHeader}>
+                        <View>
+                          <Text style={[styles.repeatableTitle, { color: theme.text }]}>
+                            {(section.itemLabel || "Item") + ` ${itemIndex + 1}`}
+                          </Text>
+                          {summaryValue ? (
+                            <Text
+                              style={[
+                                styles.repeatableSummary,
+                                { color: theme.textSecondary },
+                              ]}
+                            >
+                              {String(summaryValue)}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {canRemove ? (
+                          <TouchableOpacity
+                            onPress={() => onRemoveRepeatableItem(section.id, itemIndex)}
+                          >
+                            <MaterialCommunityIcons
+                              name="delete-outline"
+                              size={20}
+                              color={theme.error}
+                            />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {section.fields.map((field) => renderFieldBlock(field, itemIndex))}
+                    </View>
+                  );
+                })}
+
+                {editable ? (
+                  <TouchableOpacity
+                    style={[styles.repeatableAddButton, { borderColor: theme.primary }]}
+                    onPress={() => onAddRepeatableItem(section.id)}
+                  >
+                    <MaterialCommunityIcons
+                      name="plus"
+                      size={18}
+                      color={theme.primary}
+                    />
+                    <Text
+                      style={[styles.repeatableAddButtonText, { color: theme.primary }]}
+                    >
+                      {section.addButtonLabel || `Add ${section.itemLabel || "item"}`}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : (
+              section.fields.map((field) => renderFieldBlock(field))
+            )}
+          </View>
+        );
+      })}
 
       <View
         style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -1090,6 +1397,9 @@ const styles = StyleSheet.create({
   fieldBlock: {
     marginBottom: 16,
   },
+  fieldContainer: {
+    flex: 1,
+  },
   fieldLabelRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1099,6 +1409,16 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  readOnlyContainer: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: "#F3F4F6",
+  },
+  readOnlyText: {
+    fontSize: 14,
   },
   textInput: {
     borderWidth: 1,
@@ -1187,6 +1507,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     flex: 1,
   },
+  radioRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  radioContainer: {
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+    borderRadius: 10,
+    marginRight: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "white",
+  },
+  radioLabel: {
+    fontSize: 14,
+    flex: 1,
+  },
   disabled: {
     opacity: 0.6,
   },
@@ -1236,6 +1580,12 @@ const styles = StyleSheet.create({
   signatureButtonText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  signatureViewButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
   },
   tableContainer: {
     gap: 16,
@@ -1341,6 +1691,42 @@ const styles = StyleSheet.create({
   },
   iosDatePicker: {
     backgroundColor: "white",
+  },
+  repeatableSection: {
+    gap: 12,
+  },
+  repeatableCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+  },
+  repeatableHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  repeatableTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  repeatableSummary: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  repeatableAddButton: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  repeatableAddButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
 });
 
