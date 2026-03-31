@@ -2325,6 +2325,48 @@ const validateRequiredFields = (
       validateFieldValue(section.id, field, sectionValues)
     );
   });
+
+  if (isGasTemplateV3(template)) {
+    const appliances = Array.isArray(values["gas-appliances"])
+      ? values["gas-appliances"]
+      : [];
+    const rectification = values["rectification-works-required"] || {};
+
+    appliances.forEach((appliance: Record<string, any>, itemIndex: number) => {
+      const itemLabel = `Appliance ${itemIndex + 1}`;
+
+      if (appliance?.["appliance-location"] === "other") {
+        if (!appliance?.["appliance-location-other"]) {
+          missing.push(`${itemLabel}: Other Appliance Location`);
+        }
+      }
+
+      if (appliance?.["appliance-type"] === "other") {
+        if (!appliance?.["appliance-type-other"]) {
+          missing.push(`${itemLabel}: Other Appliance Type`);
+        }
+      }
+
+      if (appliance?.["room-sealed-appliance"] === "yes") {
+        if (!appliance?.["negative-pressure-present"]) {
+          missing.push(`${itemLabel}: Negative pressure present?`);
+        }
+        if (!appliance?.["co-spillage-test"]) {
+          missing.push(`${itemLabel}: CO spillage test conducted?`);
+        }
+      }
+    });
+
+    if (rectification?.["issues-identified"] === "yes") {
+      if (!rectification?.["issue-description"]) {
+        missing.push("Issue Description");
+      }
+      if (!rectification?.["risk-level"]) {
+        missing.push("Risk Level");
+      }
+    }
+  }
+
   return missing;
 };
 
