@@ -40,13 +40,22 @@ export default function ActiveJobsPage() {
           ...filters,
           page: 1,
           limit: 50,
+          sortBy: "updatedAt",
+          sortOrder: "desc",
         });
 
-        // Sort jobs by due date in ascending order
+        // Show newly assigned or recently updated jobs first.
         const sortedJobs = (data.jobs || []).sort((a, b) => {
-          const dateA = new Date(a.dueDate);
-          const dateB = new Date(b.dueDate);
-          return dateA.getTime() - dateB.getTime();
+          const recentA = new Date(a.updatedAt || a.createdAt).getTime();
+          const recentB = new Date(b.updatedAt || b.createdAt).getTime();
+
+          if (recentA !== recentB) {
+            return recentB - recentA;
+          }
+
+          const dueA = new Date(a.dueDate).getTime();
+          const dueB = new Date(b.dueDate).getTime();
+          return dueA - dueB;
         });
 
         setJobs(sortedJobs);
@@ -122,7 +131,7 @@ export default function ActiveJobsPage() {
         "Success", 
         "Job completed successfully!" + 
         (completionData.hasInvoice ? " Invoice has been created." : "") +
-        (completionData.reportFile ? " Report has been uploaded." : ""),
+        (completionData.inspectionReportId ? " Report has been uploaded." : ""),
         [{ text: "OK" }]
       );
       

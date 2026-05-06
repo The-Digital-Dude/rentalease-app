@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   View,
   Text,
   Modal,
@@ -11,7 +12,9 @@ import {
   ActivityIndicator,
   Switch,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system/legacy";
 import { useTheme } from "../contexts/ThemeContext";
 import InspectionForm, { InspectionFormValues } from "./InspectionForm";
 import type {
@@ -116,6 +119,97 @@ const defaultLineItem = (): InvoiceLineItem => ({
   rate: 0,
   amount: 0,
 });
+
+const DRAFT_VERSION = 1;
+const DRAFT_SAVE_DELAY_MS = 600;
+const DRAFT_KEY_PREFIX = "inspectionDraft:v1:";
+const DRAFT_MEDIA_DIR = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}inspection-drafts`
+  : "";
+
+type InspectionDraft = {
+  version: number;
+  jobId: string;
+  jobType: string;
+  updatedAt: string;
+  currentStepIndex: number;
+  selectedTemplate: InspectionTemplate | null;
+  bedroomCount: number;
+  bathroomCount: number;
+  formValues: InspectionFormValues;
+  mediaByField: Record<string, InspectionMediaUpload[]>;
+  notes: string;
+  inspectionReportId: string | null;
+  inspectionReportUrl?: string;
+  jobCompletionCommitted: boolean;
+  hasInvoice: boolean;
+  invoiceDescription: string;
+  lineItems: InvoiceLineItem[];
+  taxPercentage: number;
+  invoiceNotes: string;
+};
+
+const getDraftKey = (jobId: string) => `${DRAFT_KEY_PREFIX}${jobId}`;
+
+const ensureDraftMediaDirectory = async () => {
+  if (!DRAFT_MEDIA_DIR) {
+    return;
+  }
+
+  const info = await FileSystem.getInfoAsync(DRAFT_MEDIA_DIR);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(DRAFT_MEDIA_DIR, {
+      intermediates: true,
+    });
+  }
+};
+
+const getMediaExtension = (media: InspectionMediaUpload) => {
+  const fromName = media.name?.match(/\.([a-zA-Z0-9]+)$/)?.[1];
+  if (fromName) {
+    return fromName.toLowerCase();
+  }
+
+  const fromType = media.type?.split("/").pop();
+  return fromType || "jpg";
+};
+
+const copyMediaToDraftStorage = async (
+  jobId: string,
+  media: InspectionMediaUpload
+): Promise<InspectionMediaUpload> => {
+  if (!DRAFT_MEDIA_DIR || !media.uri?.startsWith("file://")) {
+    return media;
+  }
+
+  if (media.uri.startsWith(`${DRAFT_MEDIA_DIR}/`)) {
+    return media;
+  }
+
+  try {
+    await ensureDraftMediaDirectory();
+    const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "");
+    const extension = getMediaExtension(media);
+    const fileName = `${safeJobId}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${extension}`;
+    const destination = `${DRAFT_MEDIA_DIR}/${fileName}`;
+
+    await FileSystem.copyAsync({
+      from: media.uri,
+      to: destination,
+    });
+
+    return {
+      ...media,
+      uri: destination,
+      name: media.name || fileName,
+    };
+  } catch (error) {
+    console.warn("[JobCompletionModal] Failed to copy media for draft", error);
+    return media;
+  }
+};
 
 const DEFAULT_TEST_NOTES =
   "Auto-generated testing notes. Replace before final submission.";
@@ -849,8 +943,30 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const [invoiceNotes, setInvoiceNotes] = useState("Payment due within 30 days of completion");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftDirtyVersion, setDraftDirtyVersion] = useState(0);
+  const draftRestoredRef = useRef(false);
+  const hasUserEditedRef = useRef(false);
+  const hasTechnicianInputRef = useRef(false);
+  const suppressDraftSavesRef = useRef(false);
+  const saveDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markDraftDirty = useCallback((protectFromReinitialize = false) => {
+    if (!draftReady) {
+      return;
+    }
+    if (protectFromReinitialize) {
+      hasTechnicianInputRef.current = true;
+    }
+    hasUserEditedRef.current = true;
+    setDraftDirtyVersion((value) => value + 1);
+  }, [draftReady]);
 
   const resetState = () => {
+    if (saveDraftTimerRef.current) {
+      clearTimeout(saveDraftTimerRef.current);
+      saveDraftTimerRef.current = null;
+    }
     setCurrentStepIndex(0);
     setTemplates([]);
     setSelectedTemplate(null);
@@ -880,7 +996,113 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setLoadingDynamicTemplate(false);
   };
 
-  const applyTemplatePrefill = (templateToApply: InspectionTemplate) => {
+  const buildDraft = useCallback(
+    (): InspectionDraft => ({
+      version: DRAFT_VERSION,
+      jobId,
+      jobType,
+      updatedAt: new Date().toISOString(),
+      currentStepIndex,
+      selectedTemplate,
+      bedroomCount,
+      bathroomCount,
+      formValues,
+      mediaByField,
+      notes,
+      inspectionReportId,
+      inspectionReportUrl,
+      jobCompletionCommitted,
+      hasInvoice,
+      invoiceDescription,
+      lineItems,
+      taxPercentage,
+      invoiceNotes,
+    }),
+    [
+      jobId,
+      jobType,
+      currentStepIndex,
+      selectedTemplate,
+      bedroomCount,
+      bathroomCount,
+      formValues,
+      mediaByField,
+      notes,
+      inspectionReportId,
+      inspectionReportUrl,
+      jobCompletionCommitted,
+      hasInvoice,
+      invoiceDescription,
+      lineItems,
+      taxPercentage,
+      invoiceNotes,
+    ]
+  );
+
+  const persistDraft = useCallback(async () => {
+    if (
+      !visible ||
+      !draftReady ||
+      suppressDraftSavesRef.current ||
+      (!hasUserEditedRef.current && !draftRestoredRef.current)
+    ) {
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem(getDraftKey(jobId), JSON.stringify(buildDraft()));
+    } catch (error) {
+      console.warn("[JobCompletionModal] Failed to save inspection draft", error);
+    }
+  }, [buildDraft, draftReady, jobId, visible]);
+
+  const clearDraft = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(getDraftKey(jobId));
+    } catch (error) {
+      console.warn("[JobCompletionModal] Failed to clear inspection draft", error);
+    }
+  }, [jobId]);
+
+  const restoreDraft = (draft: InspectionDraft) => {
+    suppressDraftSavesRef.current = true;
+    setCurrentStepIndex(Math.min(Math.max(draft.currentStepIndex || 0, 0), steps.length - 1));
+    setSelectedTemplate(draft.selectedTemplate || null);
+    setBedroomCount(draft.bedroomCount || 1);
+    setBathroomCount(draft.bathroomCount || 1);
+    setFormValues(draft.formValues || {});
+    setMediaByField(draft.mediaByField || {});
+    setNotes(draft.notes || "");
+    setInspectionReportId(draft.inspectionReportId || null);
+    setInspectionReportUrl(draft.inspectionReportUrl);
+    setJobCompletionCommitted(Boolean(draft.jobCompletionCommitted));
+    setHasInvoice(Boolean(draft.hasInvoice));
+    setInvoiceDescription(
+      draft.invoiceDescription ||
+        "Gas safety inspection and compliance check for rental property"
+    );
+    setLineItems(draft.lineItems?.length ? draft.lineItems : [{
+      id: `${Date.now()}`,
+      name: "Gas Safety Inspection Service",
+      quantity: 1,
+      rate: 150.00,
+      amount: 150.00,
+    }]);
+    setTaxPercentage(draft.taxPercentage ?? 10);
+    setInvoiceNotes(draft.invoiceNotes || "Payment due within 30 days of completion");
+    draftRestoredRef.current = true;
+    hasUserEditedRef.current = true;
+    hasTechnicianInputRef.current = true;
+    setDraftDirtyVersion((value) => value + 1);
+    setTimeout(() => {
+      suppressDraftSavesRef.current = false;
+    }, 0);
+  };
+
+  const applyTemplatePrefill = (
+    templateToApply: InspectionTemplate,
+    shouldMarkDirty = false
+  ) => {
     setSelectedTemplate(templateToApply);
     setFormValues(initializeFormValues(templateToApply, jobDetails));
     setMediaByField(generateMediaPrefillForTemplate(templateToApply));
@@ -888,13 +1110,64 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
     setJobCompletionCommitted(false);
+    if (shouldMarkDirty) {
+      markDraftDirty();
+    }
   };
 
   useEffect(() => {
     if (visible) {
-      loadJobDetails();
-      loadTemplates();
+      const openModal = async () => {
+        suppressDraftSavesRef.current = true;
+        draftRestoredRef.current = false;
+        hasUserEditedRef.current = false;
+        hasTechnicianInputRef.current = false;
+        setDraftReady(false);
+        resetState();
+
+        try {
+          const storedDraft = await AsyncStorage.getItem(getDraftKey(jobId));
+          if (storedDraft) {
+            const draft = JSON.parse(storedDraft) as InspectionDraft;
+            if (draft.version === DRAFT_VERSION && draft.jobId === jobId) {
+              const shouldResumeDraft = await new Promise<boolean>((resolve) => {
+                Alert.alert(
+                  "Resume inspection draft?",
+                  "There is saved progress for this job. Resume it or start a new form.",
+                  [
+                    {
+                      text: "Start over",
+                      style: "destructive",
+                      onPress: () => resolve(false),
+                    },
+                    {
+                      text: "Resume draft",
+                      onPress: () => resolve(true),
+                    },
+                  ]
+                );
+              });
+
+              if (shouldResumeDraft) {
+                restoreDraft(draft);
+              } else {
+                await clearDraft();
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("[JobCompletionModal] Failed to load inspection draft", error);
+        } finally {
+          suppressDraftSavesRef.current = false;
+          setDraftReady(true);
+          loadJobDetails();
+          loadTemplates();
+        }
+      };
+
+      openModal();
     } else {
+      setDraftReady(false);
       resetState();
     }
   }, [visible]);
@@ -902,11 +1175,54 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   // Re-initialize form values when both template and job details are loaded
   useEffect(() => {
     if (selectedTemplate && jobDetails && visible) {
+      if (draftRestoredRef.current || hasTechnicianInputRef.current) {
+        return;
+      }
       console.log("[JobCompletionModal] Re-initializing form with job data");
       const initialValues = initializeFormValues(selectedTemplate, jobDetails);
       setFormValues(initialValues);
     }
   }, [selectedTemplate, jobDetails, visible]);
+
+  useEffect(() => {
+    if (!visible || !draftReady || draftDirtyVersion === 0) {
+      return;
+    }
+
+    if (saveDraftTimerRef.current) {
+      clearTimeout(saveDraftTimerRef.current);
+    }
+
+    saveDraftTimerRef.current = setTimeout(() => {
+      saveDraftTimerRef.current = null;
+      persistDraft();
+    }, DRAFT_SAVE_DELAY_MS);
+
+    return () => {
+      if (saveDraftTimerRef.current) {
+        clearTimeout(saveDraftTimerRef.current);
+        saveDraftTimerRef.current = null;
+      }
+    };
+  }, [draftDirtyVersion, draftReady, persistDraft, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "inactive" || nextState === "background") {
+        if (saveDraftTimerRef.current) {
+          clearTimeout(saveDraftTimerRef.current);
+          saveDraftTimerRef.current = null;
+        }
+        persistDraft();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [persistDraft, visible]);
 
   const loadJobDetails = async () => {
     try {
@@ -929,8 +1245,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       setTemplateError(null);
       // Clear any stale template data before loading fresh results
       setTemplates([]);
-      setSelectedTemplate(null);
-      setFormValues({});
+      if (!draftRestoredRef.current) {
+        setSelectedTemplate(null);
+        setFormValues({});
+      }
 
       if (isGasJobType(jobType)) {
         try {
@@ -957,7 +1275,9 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           }));
 
           setTemplates([gasTemplate]);
-          applyTemplatePrefill(gasTemplate);
+          if (!draftRestoredRef.current && !hasUserEditedRef.current) {
+            applyTemplatePrefill(gasTemplate);
+          }
           return;
         } catch (gasTemplateError) {
           console.warn(
@@ -995,6 +1315,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const goToStep = (stepIndex: number) => {
     const boundedIndex = Math.min(Math.max(stepIndex, 0), steps.length - 1);
     if (boundedIndex !== currentStepIndex) {
+      markDraftDirty();
       if (boundedIndex < currentStepIndex) {
         // Navigating backwards invalidates generated report snapshot
         setInspectionReportId(null);
@@ -1055,7 +1376,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         }
       );
 
-      applyTemplatePrefill(dynamicTemplate);
+      applyTemplatePrefill(dynamicTemplate, true);
 
       const nextStepIndex = steps.findIndex((step) => step.key === "form");
       goToStep(nextStepIndex);
@@ -1241,6 +1562,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           ? "Inspection submitted and job completed successfully."
           : "Job completed successfully."
       );
+      suppressDraftSavesRef.current = true;
+      await clearDraft();
       onClose();
     } catch (error: any) {
       console.log(error, "Error...RentalEase");
@@ -1257,7 +1580,13 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   };
 
   const handleTemplateSelect = (template: InspectionTemplate) => {
-    applyTemplatePrefill(template);
+    applyTemplatePrefill(template, true);
+  };
+
+  const handleClose = () => {
+    persistDraft().finally(() => {
+      onClose();
+    });
   };
 
   const handleValueChange = (
@@ -1266,6 +1595,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     value: any,
     itemIndex?: number
   ) => {
+    markDraftDirty(true);
     setFormValues((prev) => {
       if (itemIndex === undefined) {
         return {
@@ -1291,15 +1621,17 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setInspectionReportUrl(undefined);
   };
 
-  const handleAddMedia = (
+  const handleAddMedia = async (
     sectionId: string,
     fieldId: string,
     media: InspectionMediaUpload,
     itemIndex?: number
   ) => {
+    markDraftDirty(true);
     const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
+    const durableMedia = await copyMediaToDraftStorage(jobId, media);
     setMediaByField((prev) => {
-      const nextItems = [...(prev[storageKey] || []), media];
+      const nextItems = [...(prev[storageKey] || []), durableMedia];
 
       setFormValues((currentValues) => {
         if (itemIndex === undefined) {
@@ -1337,6 +1669,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     });
     setInspectionReportId(null);
     setInspectionReportUrl(undefined);
+    markDraftDirty(true);
   };
 
   const handleRemoveMedia = (
@@ -1345,6 +1678,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     index: number,
     itemIndex?: number
   ) => {
+    markDraftDirty(true);
     const storageKey = getMediaStorageKey(sectionId, fieldId, itemIndex);
     setMediaByField((prev) => {
       const nextItems = (prev[storageKey] || []).filter((_, i) => i !== index);
@@ -1393,6 +1727,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       return;
     }
 
+    markDraftDirty(true);
     setFormValues((prev) => {
       const currentItems = Array.isArray(prev[sectionId]) ? prev[sectionId] : [];
       const newItem = section.fields.reduce((acc: Record<string, any>, field) => {
@@ -1421,6 +1756,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     const section = selectedTemplate?.sections.find((entry) => entry.id === sectionId);
     const minimumItems = section?.minItems || 0;
 
+    markDraftDirty(true);
     setFormValues((prev) => {
       const currentItems = Array.isArray(prev[sectionId]) ? prev[sectionId] : [];
       if (currentItems.length <= minimumItems) {
@@ -1472,6 +1808,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     field: keyof InvoiceLineItem,
     value: string | number
   ) => {
+    markDraftDirty(true);
     setLineItems((prev) =>
       prev.map((item) => {
         if (item.id === id) {
@@ -1489,10 +1826,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   };
 
   const addLineItem = () => {
+    markDraftDirty(true);
     setLineItems((prev) => [...prev, defaultLineItem()]);
   };
 
   const removeLineItem = (id: string) => {
+    markDraftDirty(true);
     setLineItems((prev) =>
       prev.length === 1 ? prev : prev.filter((item) => item.id !== id)
     );
@@ -1645,9 +1984,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         styles.counterButton,
                         { borderColor: theme.border },
                       ]}
-                      onPress={() =>
-                        setBedroomCount(Math.max(1, bedroomCount - 1))
-                      }
+                      onPress={() => {
+                        markDraftDirty(true);
+                        setBedroomCount(Math.max(1, bedroomCount - 1));
+                      }}
                       disabled={bedroomCount <= 1}
                     >
                       <MaterialCommunityIcons
@@ -1668,9 +2008,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         styles.counterButton,
                         { borderColor: theme.border },
                       ]}
-                      onPress={() =>
-                        setBedroomCount(Math.min(20, bedroomCount + 1))
-                      }
+                      onPress={() => {
+                        markDraftDirty(true);
+                        setBedroomCount(Math.min(20, bedroomCount + 1));
+                      }}
                       disabled={bedroomCount >= 20}
                     >
                       <MaterialCommunityIcons
@@ -1704,9 +2045,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         styles.counterButton,
                         { borderColor: theme.border },
                       ]}
-                      onPress={() =>
-                        setBathroomCount(Math.max(1, bathroomCount - 1))
-                      }
+                      onPress={() => {
+                        markDraftDirty(true);
+                        setBathroomCount(Math.max(1, bathroomCount - 1));
+                      }}
                       disabled={bathroomCount <= 1}
                     >
                       <MaterialCommunityIcons
@@ -1727,9 +2069,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                         styles.counterButton,
                         { borderColor: theme.border },
                       ]}
-                      onPress={() =>
-                        setBathroomCount(Math.min(10, bathroomCount + 1))
-                      }
+                      onPress={() => {
+                        markDraftDirty(true);
+                        setBathroomCount(Math.min(10, bathroomCount + 1));
+                      }}
                       disabled={bathroomCount >= 10}
                     >
                       <MaterialCommunityIcons
@@ -1784,6 +2127,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
               onRemoveRepeatableItem={handleRemoveRepeatableItem}
               notes={notes}
               onNotesChange={(val) => {
+                markDraftDirty(true);
                 setNotes(val);
                 setInspectionReportId(null);
                 setInspectionReportUrl(undefined);
@@ -1842,7 +2186,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
               </View>
               <Switch
                 value={hasInvoice}
-                onValueChange={setHasInvoice}
+                onValueChange={(value) => {
+                  markDraftDirty(true);
+                  setHasInvoice(value);
+                }}
                 trackColor={{ false: theme.textTertiary, true: theme.primary }}
                 thumbColor={hasInvoice ? theme.surface : theme.textSecondary}
               />
@@ -1869,7 +2216,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                       { borderColor: theme.border, color: theme.text },
                     ]}
                     value={invoiceDescription}
-                    onChangeText={setInvoiceDescription}
+                    onChangeText={(value) => {
+                      markDraftDirty(true);
+                      setInvoiceDescription(value);
+                    }}
                     placeholder="Enter invoice description"
                     placeholderTextColor={theme.placeholder}
                     multiline
@@ -2017,9 +2367,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                     ]}
                     value={String(taxPercentage)}
                     keyboardType="numeric"
-                    onChangeText={(text) =>
-                      setTaxPercentage(parseFloat(text) || 0)
-                    }
+                    onChangeText={(text) => {
+                      markDraftDirty(true);
+                      setTaxPercentage(parseFloat(text) || 0);
+                    }}
                     placeholder="10"
                     placeholderTextColor={theme.placeholder}
                   />
@@ -2082,7 +2433,10 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
                       { borderColor: theme.border, color: theme.text },
                     ]}
                     value={invoiceNotes}
-                    onChangeText={setInvoiceNotes}
+                    onChangeText={(value) => {
+                      markDraftDirty(true);
+                      setInvoiceNotes(value);
+                    }}
                     placeholder="Optional notes"
                     placeholderTextColor={theme.placeholder}
                     multiline
@@ -2120,7 +2474,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.footerSecondary}
-          onPress={onClose}
+          onPress={handleClose}
           disabled={isSubmitting}
         >
           <Text
@@ -2173,14 +2527,14 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={[styles.headerTitle, { color: theme.text }]}>
             Complete Job
           </Text>
-          <TouchableOpacity onPress={onClose}>
+          <TouchableOpacity onPress={handleClose}>
             <MaterialCommunityIcons name="close" size={24} color={theme.text} />
           </TouchableOpacity>
         </View>
