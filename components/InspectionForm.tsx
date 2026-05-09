@@ -380,27 +380,29 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       }
 
       console.log("[InspectionForm] Launching photo library...");
+      const allowsMultipleSelection = field.type === "photo-multi";
       const result = await ImagePicker.launchImageLibraryAsync({
-        allowsMultipleSelection: false,
+        allowsMultipleSelection,
         quality: 0.7,
-        allowsEditing: true,
+        allowsEditing: !allowsMultipleSelection,
         aspect: [4, 3],
       });
 
       console.log("[InspectionForm] Photo library result:", result);
 
       if (!result.canceled && result.assets?.length) {
-        const asset = result.assets[0];
-        const media: InspectionMediaUpload = {
-          uri: asset.uri,
-          name:
-            asset.fileName ||
-            `${field.id}-${Date.now()}.${asset.mimeType?.split("/").pop() || "jpg"}`,
-          type: asset.mimeType || "image/jpeg",
-          size: asset.fileSize,
-        };
-        console.log("[InspectionForm] Adding media:", media);
-        onAddMedia(sectionId, field.id, media, itemIndex);
+        result.assets.forEach((asset, index) => {
+          const media: InspectionMediaUpload = {
+            uri: asset.uri,
+            name:
+              asset.fileName ||
+              `${field.id}-${Date.now()}-${index + 1}.${asset.mimeType?.split("/").pop() || "jpg"}`,
+            type: asset.mimeType || "image/jpeg",
+            size: asset.fileSize,
+          };
+          console.log("[InspectionForm] Adding media:", media);
+          onAddMedia(sectionId, field.id, media, itemIndex);
+        });
       }
     } catch (error) {
       console.error("[InspectionForm] Photo library error:", error);
