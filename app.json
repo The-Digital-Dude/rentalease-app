@@ -2,18 +2,23 @@
   "expo": {
     "name": "RentalEase Technician",
     "slug": "RentalEase_Technician",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "owner": "juhan.rokoautomations",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#ffffff",
+      "dark": {
+        "image": "./assets/splash-icon-dark.png",
+        "backgroundColor": "#0f172a"
+      }
     },
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": false,
       "bundleIdentifier": "com.rentalease.technician",
       "buildNumber": "1",

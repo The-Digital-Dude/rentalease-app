@@ -45,6 +45,7 @@
     "production": {
       "android": {},
       "ios": {
+        "ascAppId": "6757342771",
         "companyName": "RentalEase Pty Ltd",
         "language": "en-AU",
         "sku": "rentalease-technician-ios"
