@@ -149,6 +149,14 @@ type InspectionDraft = {
   invoiceNotes: string;
 };
 
+const splitNestedTableMediaFieldId = (fieldId: string) => {
+  const [tableFieldId, columnId] = fieldId.split(".");
+  if (!tableFieldId || !columnId) {
+    return null;
+  }
+  return { tableFieldId, columnId };
+};
+
 const getDraftKey = (jobId: string) => `${DRAFT_KEY_PREFIX}${jobId}`;
 
 const ensureDraftMediaDirectory = async () => {
@@ -1644,6 +1652,34 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           };
         }
 
+        const nestedTableMedia = splitNestedTableMediaFieldId(fieldId);
+        const currentSectionValue = currentValues[sectionId];
+        if (
+          nestedTableMedia &&
+          currentSectionValue &&
+          !Array.isArray(currentSectionValue)
+        ) {
+          const { tableFieldId, columnId } = nestedTableMedia;
+          const tableRows = Array.isArray(currentSectionValue[tableFieldId])
+            ? currentSectionValue[tableFieldId]
+            : [];
+
+          return {
+            ...currentValues,
+            [sectionId]: {
+              ...currentSectionValue,
+              [tableFieldId]: tableRows.map((row: Record<string, any>, index: number) =>
+                index === itemIndex
+                  ? {
+                      ...(row || {}),
+                      [columnId]: nextItems.map((entry) => entry.name || entry.uri),
+                    }
+                  : row
+              ),
+            },
+          };
+        }
+
         const currentSectionItems = Array.isArray(currentValues[sectionId])
           ? currentValues[sectionId]
           : [];
@@ -1690,6 +1726,34 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
             [sectionId]: {
               ...(currentValues[sectionId] || {}),
               [fieldId]: nextItems.map((item) => item.name || item.uri),
+            },
+          };
+        }
+
+        const nestedTableMedia = splitNestedTableMediaFieldId(fieldId);
+        const currentSectionValue = currentValues[sectionId];
+        if (
+          nestedTableMedia &&
+          currentSectionValue &&
+          !Array.isArray(currentSectionValue)
+        ) {
+          const { tableFieldId, columnId } = nestedTableMedia;
+          const tableRows = Array.isArray(currentSectionValue[tableFieldId])
+            ? currentSectionValue[tableFieldId]
+            : [];
+
+          return {
+            ...currentValues,
+            [sectionId]: {
+              ...currentSectionValue,
+              [tableFieldId]: tableRows.map((row: Record<string, any>, currentIndex: number) =>
+                currentIndex === itemIndex
+                  ? {
+                      ...(row || {}),
+                      [columnId]: nextItems.map((entry) => entry.name || entry.uri),
+                    }
+                  : row
+              ),
             },
           };
         }
@@ -2634,13 +2698,22 @@ const validateRequiredFields = (
       }
       const requiredColumns = field.columns?.filter((column) => column.required);
       if (requiredColumns && requiredColumns.length) {
-        const hasIncompleteRow = rows.some((row: Record<string, any>) =>
-          requiredColumns.some(
-            (column) =>
-              row[column.id] === undefined ||
-              row[column.id] === null ||
-              row[column.id] === ""
-          )
+        const hasIncompleteRow = rows.some(
+          (row: Record<string, any>, rowIndex: number) =>
+            requiredColumns.some((column) => {
+              if (column.type === "photo" || column.type === "photo-multi") {
+                const nestedFieldId = `${field.id}.${column.id}`;
+                const attachments =
+                  media[getMediaStorageKey(sectionId, nestedFieldId, rowIndex)] || [];
+                return !attachments.length;
+              }
+
+              return (
+                row[column.id] === undefined ||
+                row[column.id] === null ||
+                row[column.id] === ""
+              );
+            })
         );
         if (hasIncompleteRow) {
           missing.push(`${labelPrefix} (complete required columns)`);

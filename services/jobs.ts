@@ -132,9 +132,18 @@ export type InspectionFieldType =
 export type InspectionTableColumn = {
   id: string;
   label: string;
-  type: "text" | "textarea" | "number" | "select" | "date";
+  type:
+    | "text"
+    | "textarea"
+    | "number"
+    | "select"
+    | "date"
+    | "photo"
+    | "photo-multi";
   required?: boolean;
   placeholder?: string;
+  helpText?: string;
+  metadata?: Record<string, any>;
   options?: InspectionFieldOption[];
 };
 
@@ -437,6 +446,40 @@ export const submitInspectionReport = async (
     }
 
     section.fields.forEach((field) => {
+      if (field.type === "table") {
+        const rows = Array.isArray(payload.formValues[section.id]?.[field.id])
+          ? payload.formValues[section.id][field.id]
+          : [];
+        const photoColumns = (field.columns || []).filter(
+          (column) => column.type === "photo" || column.type === "photo-multi"
+        );
+
+        rows.forEach((_, rowIndex) => {
+          photoColumns.forEach((column) => {
+            const nestedFieldId = `${field.id}.${column.id}`;
+            const storageKey = getMediaStorageKey(
+              section.id,
+              nestedFieldId,
+              rowIndex
+            );
+            const items = payload.mediaByField[storageKey];
+            if (!items?.length) {
+              return;
+            }
+
+            appendMedia(`${field.id}-${column.id}-${rowIndex}`, {
+              ...column,
+              type: column.type,
+            } as InspectionField, items, {
+              sectionId: section.id,
+              fieldId: column.id,
+              parentFieldId: field.id,
+              itemIndex: rowIndex,
+            });
+          });
+        });
+      }
+
       const storageKey = getMediaStorageKey(section.id, field.id);
       const items = payload.mediaByField[storageKey];
       if (items && items.length) {

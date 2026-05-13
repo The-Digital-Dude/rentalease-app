@@ -486,7 +486,8 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     const handleAddRow = () => {
       const newRow: Record<string, any> = {};
       columns.forEach((column) => {
-        newRow[column.id] = "";
+        newRow[column.id] =
+          column.type === "photo" || column.type === "photo-multi" ? [] : "";
       });
       onChange(sectionId, field.id, [...rows, newRow]);
     };
@@ -515,6 +516,70 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       } as const;
 
       switch (column.type) {
+        case "photo":
+        case "photo-multi": {
+          const nestedFieldId = `${field.id}.${column.id}`;
+          const mediaKey = getMediaStorageKey(sectionId, nestedFieldId, rowIndex);
+          const mediaForColumn = mediaByField[mediaKey] || [];
+          const photoField = {
+            id: nestedFieldId,
+            label: column.label,
+            type: column.type,
+            required: column.required,
+            helpText: column.helpText,
+            metadata: column.metadata,
+          } as InspectionField;
+
+          return (
+            <View>
+              <View style={styles.mediaRow}>
+                {mediaForColumn.map((item, index) => (
+                  <View key={`${item.uri}-${index}`} style={styles.mediaThumb}>
+                    <Image source={{ uri: item.uri }} style={styles.mediaImage} />
+                    {editable && (
+                      <TouchableOpacity
+                        style={styles.mediaRemove}
+                        onPress={() =>
+                          onRemoveMedia(sectionId, nestedFieldId, index, rowIndex)
+                        }
+                      >
+                        <MaterialCommunityIcons
+                          name="close-circle"
+                          size={18}
+                          color={theme.error}
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+                {editable && (
+                  <TouchableOpacity
+                    style={[styles.mediaAddButton, { borderColor: theme.border }]}
+                    onPress={() =>
+                      handlePickImage(
+                        sectionId,
+                        photoField,
+                        mediaForColumn.length,
+                        rowIndex
+                      )
+                    }
+                  >
+                    <MaterialCommunityIcons
+                      name="camera-plus"
+                      size={24}
+                      color={theme.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+              </View>
+              {column.helpText ? (
+                <Text style={[styles.helpText, { color: theme.textSecondary }]}>
+                  {column.helpText}
+                </Text>
+              ) : null}
+            </View>
+          );
+        }
         case "number":
           return (
             <TextInput
