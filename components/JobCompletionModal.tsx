@@ -377,6 +377,10 @@ const buildTablePlaceholderRow = (
       "distance-to-fan": 150,
       "physical-condition": ["securely-mounted", "no-paint-dust"],
       "alarm-comments": "Auto-filled smoke alarm record for testing",
+      "photo-context": [],
+      "photo-label": [],
+      "photo-test": [],
+      "photo-replaced": [],
       "compliance-status": "compliant",
       "non-compliance-reasons": [],
       "non-compliance-other": "",
@@ -424,6 +428,10 @@ const buildTablePlaceholderRow = (
       case "textarea":
         row[column.id] =
           column.placeholder || `${column.label || "Detail"} (auto)`;
+        break;
+      case "photo":
+      case "photo-multi":
+        row[column.id] = [];
         break;
       default:
         row[column.id] =
