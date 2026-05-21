@@ -20,7 +20,10 @@ export default function AppLayout() {
     (async () => {
       try {
         const expoToken = await registerForPushNotificationsIfPossible();
-        if (!expoToken || cancelled) return;
+        if (!expoToken || cancelled) {
+          console.log("[PushDebug] No Expo push token available after registration attempt");
+          return;
+        }
         await sendPushTokenToBackend(expoToken);
       } catch (e) {
         console.log("[Push] Registration skipped/failed:", (e as any)?.message || e);
