@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { getToken } from "./secureStore";
+import { TECHNICIAN_PAYMENTS_ENABLED } from "../config/features";
 
 const RAW_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined;
 
@@ -77,6 +78,24 @@ export type PaymentFilters = {
 export async function fetchTechnicianPayments(
   filters: PaymentFilters = {}
 ): Promise<PaymentsResponse> {
+  if (!TECHNICIAN_PAYMENTS_ENABLED) {
+    return {
+      payments: [],
+      pagination: {
+        page: 1,
+        limit: filters.limit || 50,
+        total: 0,
+        totalPages: 0,
+      },
+      summary: {
+        totalPending: 0,
+        totalPaid: 0,
+        pendingAmount: 0,
+        paidAmount: 0,
+      },
+    };
+  }
+
   const baseUrl = getBaseUrl();
   const token = await getToken();
 
@@ -174,6 +193,10 @@ export async function fetchTechnicianPayments(
 
 // Get payment details
 export async function fetchPaymentDetails(paymentId: string): Promise<TechnicianPayment> {
+  if (!TECHNICIAN_PAYMENTS_ENABLED) {
+    throw new Error("Technician payment feature is disabled");
+  }
+
   const baseUrl = getBaseUrl();
   const token = await getToken();
 
@@ -212,6 +235,10 @@ export async function fetchPaymentDetails(paymentId: string): Promise<Technician
 export async function exportPayments(
   filters: PaymentFilters & { format: "csv" | "pdf" } = { format: "csv" }
 ): Promise<{ url: string; filename: string }> {
+  if (!TECHNICIAN_PAYMENTS_ENABLED) {
+    throw new Error("Technician payment feature is disabled");
+  }
+
   const baseUrl = getBaseUrl();
   const token = await getToken();
 

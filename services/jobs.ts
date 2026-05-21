@@ -611,8 +611,16 @@ export async function fetchTechnicianJobs(
 
   // Build query parameters
   const queryParams = new URLSearchParams();
+  const endpoint =
+    filters.status === "Overdue"
+      ? "/api/v1/technicians/overdue-jobs"
+      : "/api/v1/technicians/jobs";
+
   Object.entries(filters).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
+      if (filters.status === "Overdue" && key === "status") {
+        return;
+      }
       queryParams.append(key, value.toString());
     }
   });
@@ -626,7 +634,7 @@ export async function fetchTechnicianJobs(
   }
 
   try {
-    const url = `${baseUrl}/api/v1/technicians/jobs${
+    const url = `${baseUrl}${endpoint}${
       queryParams.toString() ? `?${queryParams.toString()}` : ""
     }`;
     console.log("[fetchTechnicianJobs] URL:", url);

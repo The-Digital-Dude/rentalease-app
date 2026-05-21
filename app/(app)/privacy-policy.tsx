@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { TouchableOpacity } from "react-native";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
+import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
 export default function PrivacyPolicyPage() {
   const router = useRouter();
@@ -64,7 +65,9 @@ export default function PrivacyPolicyPage() {
         <Text style={styles.bulletPoint}>• Send job notifications and important updates</Text>
         <Text style={styles.bulletPoint}>• Sync your work schedule with your device calendar</Text>
         <Text style={styles.bulletPoint}>• Store inspection photos and job completion records</Text>
-        <Text style={styles.bulletPoint}>• Process payments for completed jobs</Text>
+        {TECHNICIAN_PAYMENTS_ENABLED && (
+          <Text style={styles.bulletPoint}>• Process payments for completed jobs</Text>
+        )}
         <Text style={styles.bulletPoint}>• Improve app functionality and user experience</Text>
 
         <Text style={styles.sectionTitle}>How We Share Your Information</Text>
@@ -118,7 +121,7 @@ export default function PrivacyPolicyPage() {
           If you have questions or concerns about this Privacy Policy, please contact us:
         </Text>
         <Text style={styles.contactInfo}>
-          Email: privacy@rentalease.com.au
+          Email: info@rentalease.com.au
         </Text>
         <Text style={styles.contactInfo}>
           Response time: Up to 30 days

@@ -15,6 +15,7 @@ import { PieChart, BarChart } from "react-native-chart-kit";
 import { fetchDashboardData, DashboardData } from "@services/dashboard";
 import { getProfile, TechnicianProfile } from "@services/profile";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
+import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -258,58 +259,59 @@ export default function HomePage() {
         </View>
       </View>
 
-      {/* Payment Stats */}
-      <View style={styles.paymentContainer}>
-        <Text style={styles.sectionTitle}>Payment Overview</Text>
-        <View style={styles.paymentGrid}>
-          <View style={styles.paymentCard}>
-            <MaterialCommunityIcons
-              name="cash-multiple"
-              size={24}
-              color={theme.primary}
-            />
-            <Text style={styles.paymentLabel}>Total Amount</Text>
-            <Text style={styles.paymentValue}>
-              ${dashboardData.paymentStats.totalAmount}
-            </Text>
+      {TECHNICIAN_PAYMENTS_ENABLED && (
+        <View style={styles.paymentContainer}>
+          <Text style={styles.sectionTitle}>Payment Overview</Text>
+          <View style={styles.paymentGrid}>
+            <View style={styles.paymentCard}>
+              <MaterialCommunityIcons
+                name="cash-multiple"
+                size={24}
+                color={theme.primary}
+              />
+              <Text style={styles.paymentLabel}>Total Amount</Text>
+              <Text style={styles.paymentValue}>
+                ${dashboardData.paymentStats.totalAmount}
+              </Text>
+            </View>
+            <View style={styles.paymentCard}>
+              <MaterialCommunityIcons
+                name="clock-outline"
+                size={24}
+                color={theme.warning}
+              />
+              <Text style={styles.paymentLabel}>Pending Amount</Text>
+              <Text style={styles.paymentValue}>
+                ${dashboardData.paymentStats.pendingAmount}
+              </Text>
+            </View>
           </View>
-          <View style={styles.paymentCard}>
-            <MaterialCommunityIcons
-              name="clock-outline"
-              size={24}
-              color={theme.warning}
-            />
-            <Text style={styles.paymentLabel}>Pending Amount</Text>
-            <Text style={styles.paymentValue}>
-              ${dashboardData.paymentStats.pendingAmount}
-            </Text>
+          <View style={styles.paymentGrid}>
+            <View style={styles.paymentCard}>
+              <MaterialCommunityIcons
+                name="file-document"
+                size={24}
+                color={theme.success}
+              />
+              <Text style={styles.paymentLabel}>Total Payments</Text>
+              <Text style={styles.paymentValue}>
+                {dashboardData.paymentStats.totalPayments}
+              </Text>
+            </View>
+            <View style={styles.paymentCard}>
+              <MaterialCommunityIcons
+                name="file-clock"
+                size={24}
+                color={theme.error}
+              />
+              <Text style={styles.paymentLabel}>Pending Payments</Text>
+              <Text style={styles.paymentValue}>
+                {dashboardData.paymentStats.pendingPayments}
+              </Text>
+            </View>
           </View>
         </View>
-        <View style={styles.paymentGrid}>
-          <View style={styles.paymentCard}>
-            <MaterialCommunityIcons
-              name="file-document"
-              size={24}
-              color={theme.success}
-            />
-            <Text style={styles.paymentLabel}>Total Payments</Text>
-            <Text style={styles.paymentValue}>
-              {dashboardData.paymentStats.totalPayments}
-            </Text>
-          </View>
-          <View style={styles.paymentCard}>
-            <MaterialCommunityIcons
-              name="file-clock"
-              size={24}
-              color={theme.error}
-            />
-            <Text style={styles.paymentLabel}>Pending Payments</Text>
-            <Text style={styles.paymentValue}>
-              {dashboardData.paymentStats.pendingPayments}
-            </Text>
-          </View>
-        </View>
-      </View>
+      )}
 
       {/* Recent Jobs */}
       <View style={styles.recentJobsContainer}>

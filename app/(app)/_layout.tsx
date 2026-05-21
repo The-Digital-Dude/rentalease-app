@@ -10,6 +10,7 @@ import {
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../../contexts/ThemeContext";
 import { registerForPushNotificationsIfPossible, sendPushTokenToBackend } from "../../services/pushNotifications";
+import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
 export default function AppLayout() {
   const { theme } = useTheme();
@@ -118,6 +119,7 @@ export default function AppLayout() {
       <Tabs.Screen
         name="payments"
         options={{
+          href: TECHNICIAN_PAYMENTS_ENABLED ? undefined : null,
           title: "Payments",
           tabBarIcon: ({ color, focused }) => (
             <MaterialCommunityIcons

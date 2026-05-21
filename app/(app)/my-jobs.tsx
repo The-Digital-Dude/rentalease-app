@@ -169,6 +169,7 @@ export default function ActiveJobsPage() {
       },
       Completed: { color: "#10B981", bgColor: isDark ? "#064E3B" : "#D1FAE5", icon: "check-circle" },
       Cancelled: { color: "#EF4444", bgColor: "#FEE2E2", icon: "close-circle" },
+      Overdue: { color: "#EF4444", bgColor: "#FEE2E2", icon: "alert-circle" },
     };
     return (
       statusConfig[status] || {
@@ -499,6 +500,8 @@ export default function ActiveJobsPage() {
               ? "You don't have any jobs at the moment"
               : selectedStatus === "Active"
               ? "You don't have any active jobs at the moment"
+              : selectedStatus === "Overdue"
+              ? "You don't have any overdue jobs at the moment"
               : `No ${selectedStatus.toLowerCase()} jobs found`}
           </Text>
         </View>
@@ -531,6 +534,7 @@ export default function ActiveJobsPage() {
     { id: "Active", label: "Active" },
     { id: "Scheduled", label: "Scheduled" },
     { id: "In Progress", label: "In Progress" },
+    { id: "Overdue", label: "Overdue" },
     { id: "Completed", label: "Completed" },
   ];
   const styles = createStyles(theme);
