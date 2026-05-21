@@ -12,7 +12,12 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter, Stack } from "expo-router";
-import { fetchTechnicianJobs, Job, JobFilters } from "@services/jobs";
+import {
+  fetchTechnicianJobs,
+  Job,
+  JobFilters,
+  getPropertyManagerName,
+} from "@services/jobs";
 import { useTheme } from "../contexts/ThemeContext";
 
 // Helper Functions
@@ -229,15 +234,15 @@ export default function CompletedJobsPage() {
           </View>
 
           <View style={styles.detailRow}>
-            <MaterialCommunityIcons
-              name="account-star"
-              size={16}
-              color={theme.textSecondary}
-            />
-            <Text style={[styles.detailText, { color: theme.textSecondary }]}>
-              Property Manager: {item.property?.propertyManager?.name || item.property?.agency?.contactPerson || "N/A"}
-            </Text>
-          </View>
+              <MaterialCommunityIcons
+                name="account-star"
+                size={16}
+                color={theme.textSecondary}
+              />
+              <Text style={[styles.detailText, { color: theme.textSecondary }]}>
+                Property Manager: {getPropertyManagerName(item.property)}
+              </Text>
+            </View>
 
           <View style={styles.detailRow}>
             <MaterialCommunityIcons

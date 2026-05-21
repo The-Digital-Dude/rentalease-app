@@ -14,9 +14,14 @@ import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { fetchJobDetails, claimJob, completeJob, Job } from "@services/jobs";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
-  JobCompletionModal,
   JobCompletionData,
+  JobCompletionModal,
 } from "../../components/JobCompletionModal";
+import {
+  getPropertyManagerEmail,
+  getPropertyManagerName,
+  getPropertyManagerPhone,
+} from "../../services/jobs";
 
 // Countdown Timer Component
 const CountdownTimer = ({
@@ -438,7 +443,6 @@ export default function JobDetailsPage() {
       Alert.alert(
         "Success",
         "Job completed successfully!" +
-          (completionData.hasInvoice ? " Invoice has been created." : "") +
           (completionData.inspectionReportId
             ? " Inspection report has been submitted."
             : ""),
@@ -522,6 +526,9 @@ export default function JobDetailsPage() {
 
   const isDue = isJobDue();
   const latestInspectionReport = job.latestInspectionReport;
+  const propertyManagerName = getPropertyManagerName(job.property);
+  const propertyManagerPhone = getPropertyManagerPhone(job.property);
+  const propertyManagerEmail = getPropertyManagerEmail(job.property);
   const reportUrl =
     latestInspectionReport?.pdf?.url ||
     (typeof job.reportFile === "string" && job.reportFile.trim()
@@ -966,9 +973,7 @@ export default function JobDetailsPage() {
                 />
                 <View style={styles.contactInfo}>
                   <Text style={[styles.contactName, { color: theme.text }]}>
-                    {job.property?.propertyManager?.name ||
-                      job.property?.agency?.contactPerson ||
-                      "N/A"}
+                    {propertyManagerName}
                   </Text>
                   <View style={styles.contactActions}>
                     <TouchableOpacity
@@ -981,10 +986,7 @@ export default function JobDetailsPage() {
                         },
                       ]}
                       onPress={() => {
-                        const phone =
-                          job.property?.propertyManager?.phone ||
-                          job.property?.agency?.phone;
-                        phone && handleCall(phone);
+                        propertyManagerPhone && handleCall(propertyManagerPhone);
                       }}
                     >
                       <MaterialCommunityIcons
@@ -998,9 +1000,7 @@ export default function JobDetailsPage() {
                           { color: theme.primary },
                         ]}
                       >
-                        {job.property?.propertyManager?.phone ||
-                          job.property?.agency?.phone ||
-                          "Phone not available"}
+                        {propertyManagerPhone || "Phone not available"}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -1013,10 +1013,7 @@ export default function JobDetailsPage() {
                         },
                       ]}
                       onPress={() => {
-                        const email =
-                          job.property?.propertyManager?.email ||
-                          job.property?.agency?.email;
-                        email && handleEmail(email);
+                        propertyManagerEmail && handleEmail(propertyManagerEmail);
                       }}
                     >
                       <MaterialCommunityIcons
@@ -1030,9 +1027,7 @@ export default function JobDetailsPage() {
                           { color: theme.primary },
                         ]}
                       >
-                        {job.property?.propertyManager?.email ||
-                          job.property?.agency?.email ||
-                          "Email not available"}
+                        {propertyManagerEmail || "Email not available"}
                       </Text>
                     </TouchableOpacity>
                   </View>

@@ -10,7 +10,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Switch,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -51,8 +50,6 @@ export interface InvoiceData {
 
 export interface JobCompletionData {
   inspectionReportId?: string;
-  hasInvoice: boolean;
-  invoiceData?: InvoiceData;
 }
 
 interface JobCompletionModalProps {
@@ -90,17 +87,15 @@ const getStepsForJobType = (jobType: string) => {
       { key: "template", label: "Select Template" },
       { key: "rooms", label: "Room Configuration" },
       { key: "form", label: "Inspection Form" },
-      { key: "invoice", label: "Invoice & Submit" },
     ] as const;
   }
   return [
     { key: "template", label: "Select Template" },
     { key: "form", label: "Inspection Form" },
-    { key: "invoice", label: "Invoice & Submit" },
   ] as const;
 };
 
-type StepKey = "template" | "rooms" | "form" | "invoice";
+type StepKey = "template" | "rooms" | "form";
 
 const isGasJobType = (value?: string) =>
   typeof value === "string" && value.toLowerCase().includes("gas");
@@ -1427,8 +1422,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       );
       return;
     }
-    const nextStepIndex = steps.findIndex((step) => step.key === "invoice");
-    goToStep(nextStepIndex);
+    handleSubmit();
   };
 
   const handleSubmit = async () => {
@@ -1451,24 +1445,6 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       );
       goToStep(1);
       return;
-    }
-
-    if (hasInvoice && !invoiceDescription.trim()) {
-      Alert.alert("Invoice required", "Please enter an invoice description.");
-      return;
-    }
-
-    if (hasInvoice) {
-      const validItems = lineItems.filter(
-        (item) => item.name.trim() && item.quantity > 0 && item.rate > 0
-      );
-      if (validItems.length === 0) {
-        Alert.alert(
-          "Invoice items",
-          "Add at least one line item with name, quantity, and rate."
-        );
-        return;
-      }
     }
 
     try {
@@ -1510,31 +1486,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       let reportId = inspectionReportId;
       let reportUrl = inspectionReportUrl;
 
-      const completionPayload: JobCompletionData = {
-        hasInvoice,
-      };
-
-      if (hasInvoice) {
-        const { subtotal, taxAmount, total } = calculateTotals();
-        const validLineItems = lineItems
-          .filter(
-            (item) => item.name.trim() && item.quantity > 0 && item.rate > 0
-          )
-          .map((item) => ({
-            ...item,
-            name: item.name.trim(),
-          }));
-
-        completionPayload.invoiceData = {
-          description: invoiceDescription.trim(),
-          lineItems: validLineItems,
-          taxPercentage,
-          subtotal,
-          taxAmount,
-          total,
-          notes: invoiceNotes.trim() || undefined,
-        } as InvoiceData;
-      }
+      const completionPayload: JobCompletionData = {};
 
       if (gasV3Submission) {
         if (!jobCompletionCommitted && job?.status !== "Completed") {
@@ -2207,317 +2159,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
             />
           </ScrollView>
         );
-      case "invoice":
       default:
-        const { subtotal, taxAmount, total } = calculateTotals();
-        return (
-          <ScrollView style={styles.stepScroll}>
-            {inspectionReportId && (
-              <View
-                style={[
-                  styles.infoCard,
-                  { backgroundColor: theme.card, borderColor: theme.border },
-                ]}
-              >
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons
-                    name="file-check"
-                    size={20}
-                    color={theme.success || "#10B981"}
-                  />
-                  <Text style={[styles.infoTitle, { color: theme.text }]}>
-                    Inspection saved
-                  </Text>
-                </View>
-                <Text style={[styles.infoSub, { color: theme.textSecondary }]}>
-                  {inspectionReportUrl
-                    ? "A PDF report has been generated and linked to this job."
-                    : "Inspection data is ready for submission."}
-                </Text>
-              </View>
-            )}
-
-            <View
-              style={[
-                styles.toggleCard,
-                { backgroundColor: theme.card, borderColor: theme.border },
-              ]}
-            >
-              <View>
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>
-                  Attach Invoice
-                </Text>
-                <Text
-                  style={[
-                    styles.sectionDescription,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  Generate an invoice for additional charges or materials.
-                </Text>
-              </View>
-              <Switch
-                value={hasInvoice}
-                onValueChange={(value) => {
-                  markDraftDirty(true);
-                  setHasInvoice(value);
-                }}
-                trackColor={{ false: theme.textTertiary, true: theme.primary }}
-                thumbColor={hasInvoice ? theme.surface : theme.textSecondary}
-              />
-            </View>
-
-            {hasInvoice && (
-              <View
-                style={[
-                  styles.invoiceContainer,
-                  { backgroundColor: theme.card, borderColor: theme.border },
-                ]}
-              >
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>
-                  Invoice Details
-                </Text>
-
-                <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: theme.text }]}>
-                    Description *
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.textInput,
-                      { borderColor: theme.border, color: theme.text },
-                    ]}
-                    value={invoiceDescription}
-                    onChangeText={(value) => {
-                      markDraftDirty(true);
-                      setInvoiceDescription(value);
-                    }}
-                    placeholder="Enter invoice description"
-                    placeholderTextColor={theme.placeholder}
-                    multiline
-                  />
-                </View>
-
-                <Text
-                  style={[
-                    styles.sectionTitle,
-                    { color: theme.text, marginTop: 12 },
-                  ]}
-                >
-                  Line Items
-                </Text>
-                {lineItems.map((item, index) => (
-                  <View
-                    key={item.id}
-                    style={[styles.lineItemCard, { borderColor: theme.border }]}
-                  >
-                    <View style={styles.lineItemHeader}>
-                      <Text
-                        style={[styles.lineItemTitle, { color: theme.text }]}
-                      >
-                        {`Item ${index + 1}`}
-                      </Text>
-                      {lineItems.length > 1 && (
-                        <TouchableOpacity
-                          onPress={() => removeLineItem(item.id)}
-                        >
-                          <MaterialCommunityIcons
-                            name="delete-outline"
-                            size={20}
-                            color={theme.error}
-                          />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                    <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: theme.text }]}>
-                        Name *
-                      </Text>
-                      <TextInput
-                        style={[
-                          styles.textInput,
-                          { borderColor: theme.border, color: theme.text },
-                        ]}
-                        value={item.name}
-                        onChangeText={(text) =>
-                          updateLineItem(item.id, "name", text)
-                        }
-                        placeholder="Line item description"
-                        placeholderTextColor={theme.placeholder}
-                      />
-                    </View>
-                    <View style={styles.lineItemRow}>
-                      <View style={styles.lineItemInputSmall}>
-                        <Text
-                          style={[styles.inputLabel, { color: theme.text }]}
-                        >
-                          Qty *
-                        </Text>
-                        <TextInput
-                          style={[
-                            styles.textInput,
-                            { borderColor: theme.border, color: theme.text },
-                          ]}
-                          value={String(item.quantity)}
-                          keyboardType="numeric"
-                          onChangeText={(text) =>
-                            updateLineItem(
-                              item.id,
-                              "quantity",
-                              parseInt(text, 10) || 0
-                            )
-                          }
-                          placeholder="1"
-                          placeholderTextColor={theme.placeholder}
-                        />
-                      </View>
-                      <View style={styles.lineItemInputSmall}>
-                        <Text
-                          style={[styles.inputLabel, { color: theme.text }]}
-                        >
-                          Rate *
-                        </Text>
-                        <TextInput
-                          style={[
-                            styles.textInput,
-                            { borderColor: theme.border, color: theme.text },
-                          ]}
-                          value={String(item.rate)}
-                          keyboardType="decimal-pad"
-                          onChangeText={(text) =>
-                            updateLineItem(
-                              item.id,
-                              "rate",
-                              parseFloat(text) || 0
-                            )
-                          }
-                          placeholder="0.00"
-                          placeholderTextColor={theme.placeholder}
-                        />
-                      </View>
-                      <View style={styles.lineItemInputSmall}>
-                        <Text
-                          style={[styles.inputLabel, { color: theme.text }]}
-                        >
-                          Amount
-                        </Text>
-                        <TextInput
-                          style={[
-                            styles.textInput,
-                            { borderColor: theme.border, color: theme.text },
-                          ]}
-                          value={`$${item.amount.toFixed(2)}`}
-                          editable={false}
-                        />
-                      </View>
-                    </View>
-                  </View>
-                ))}
-
-                <TouchableOpacity
-                  style={styles.addItemButton}
-                  onPress={addLineItem}
-                >
-                  <MaterialCommunityIcons
-                    name="plus-circle"
-                    size={18}
-                    color={theme.primary}
-                  />
-                  <Text style={[styles.addItemText, { color: theme.primary }]}>
-                    Add line item
-                  </Text>
-                </TouchableOpacity>
-
-                <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: theme.text }]}>
-                    Tax %
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.textInput,
-                      { borderColor: theme.border, color: theme.text },
-                    ]}
-                    value={String(taxPercentage)}
-                    keyboardType="numeric"
-                    onChangeText={(text) => {
-                      markDraftDirty(true);
-                      setTaxPercentage(parseFloat(text) || 0);
-                    }}
-                    placeholder="10"
-                    placeholderTextColor={theme.placeholder}
-                  />
-                </View>
-
-                <View style={styles.summaryRow}>
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      { color: theme.textSecondary },
-                    ]}
-                  >
-                    Subtotal
-                  </Text>
-                  <Text style={[styles.summaryValue, { color: theme.text }]}>
-                    ${subtotal.toFixed(2)}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      { color: theme.textSecondary },
-                    ]}
-                  >
-                    Tax
-                  </Text>
-                  <Text style={[styles.summaryValue, { color: theme.text }]}>
-                    ${taxAmount.toFixed(2)}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      styles.summaryTotal,
-                      { color: theme.text },
-                    ]}
-                  >
-                    Total
-                  </Text>
-                  <Text
-                    style={[
-                      styles.summaryValue,
-                      styles.summaryTotal,
-                      { color: theme.text },
-                    ]}
-                  >
-                    ${total.toFixed(2)}
-                  </Text>
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: theme.text }]}>
-                    Notes
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.textInput,
-                      { borderColor: theme.border, color: theme.text },
-                    ]}
-                    value={invoiceNotes}
-                    onChangeText={(value) => {
-                      markDraftDirty(true);
-                      setInvoiceNotes(value);
-                    }}
-                    placeholder="Optional notes"
-                    placeholderTextColor={theme.placeholder}
-                    multiline
-                  />
-                </View>
-              </View>
-            )}
-          </ScrollView>
-        );
+        return null;
     }
   };
 
@@ -2529,8 +2172,6 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         ? "Continue"
         : stepKey === "rooms"
         ? "Generate Template"
-        : stepKey === "form"
-        ? "Continue"
         : "Complete Job";
 
     const primaryAction =
@@ -2538,9 +2179,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         ? handleTemplateContinue
         : stepKey === "rooms"
         ? handleRoomConfigContinue
-        : stepKey === "form"
-        ? handleFormContinue
-        : handleSubmit;
+        : handleFormContinue;
 
     return (
       <View style={styles.footer}>

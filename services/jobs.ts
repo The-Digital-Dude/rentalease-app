@@ -41,6 +41,14 @@ export type Job = {
       email?: string;
       phone?: string;
     };
+    assignedPropertyManager?: {
+      name?: string;
+      fullName?: string;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+    };
     propertyType?: string;
     region?: string;
     agency?: {
@@ -84,6 +92,69 @@ export type Job = {
   invoice?: any;
   completedAt?: string;
   updatedAt?: string;
+};
+
+const getFullName = (value: any): string => {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  const direct =
+    value.name ||
+    value.fullName ||
+    value.contactPerson ||
+    value.companyName;
+
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim();
+  }
+
+  const first = typeof value.firstName === "string" ? value.firstName.trim() : "";
+  const last = typeof value.lastName === "string" ? value.lastName.trim() : "";
+  return `${first} ${last}`.trim();
+};
+
+export const getPropertyManagerName = (property?: Job["property"] | any) => {
+  if (!property) return "N/A";
+
+  const explicitManager =
+    getFullName((property as any).propertyManager) ||
+    getFullName((property as any).assignedPropertyManager);
+
+  if (explicitManager) {
+    return explicitManager;
+  }
+
+  return getFullName((property as any).agency) || "N/A";
+};
+
+export const getPropertyManagerEmail = (property?: Job["property"] | any) => {
+  return (
+    (property as any)?.propertyManager?.email ||
+    (property as any)?.assignedPropertyManager?.email ||
+    (property as any)?.agency?.email ||
+    ""
+  );
+};
+
+export const getPropertyManagerPhone = (property?: Job["property"] | any) => {
+  return (
+    (property as any)?.propertyManager?.phone ||
+    (property as any)?.assignedPropertyManager?.phone ||
+    (property as any)?.agency?.phone ||
+    ""
+  );
+};
+
+export const getAssignedTechnicianName = (jobOrTechnician?: Job | any) => {
+  const technician =
+    (jobOrTechnician as Job)?.assignedTechnician !== undefined
+      ? (jobOrTechnician as Job).assignedTechnician
+      : jobOrTechnician;
+
+  return getFullName(technician) || "Not Assigned";
 };
 
 export type JobsResponse = {
@@ -758,22 +829,6 @@ export async function completeJob(
       size: number;
     };
     inspectionReportId?: string;
-    hasInvoice: boolean;
-    invoiceData?: {
-      description: string;
-      lineItems: Array<{
-        id: string;
-        name: string;
-        quantity: number;
-        rate: number;
-        amount: number;
-      }>;
-      taxPercentage: number;
-      subtotal: number;
-      taxAmount: number;
-      total: number;
-      notes?: string;
-    };
   }
 ): Promise<{ message: string; job: Job }> {
   const baseUrl = BASE_URL;
@@ -786,18 +841,11 @@ export async function completeJob(
   try {
     // Create FormData for multipart/form-data request
     const formData = new FormData();
-    // Add invoice flag
-    formData.append("hasInvoice", completionData.hasInvoice.toString());
+    // Technician-entered invoice creation is disabled in the mobile flow.
+    formData.append("hasInvoice", "false");
 
     if (completionData.inspectionReportId) {
       formData.append("inspectionReportId", completionData.inspectionReportId);
-    }
-
-    // Add invoice data if provided
-    if (completionData.hasInvoice && completionData.invoiceData) {
-      const invoiceDataString = JSON.stringify(completionData.invoiceData);
-      console.log("[completeJob] Invoice data string:", invoiceDataString);
-      formData.append("invoiceData", invoiceDataString);
     }
 
     // Add report file if provided
@@ -815,12 +863,9 @@ export async function completeJob(
       `${baseUrl}/api/v1/jobs/${jobId}/complete`
     );
     console.log("[completeJob] FormData contents:");
-    console.log("- hasInvoice:", completionData.hasInvoice.toString());
+    console.log("- hasInvoice:", "false");
     if (completionData.inspectionReportId) {
       console.log("- inspectionReportId:", completionData.inspectionReportId);
-    }
-    if (completionData.hasInvoice && completionData.invoiceData) {
-      console.log("- invoiceData:", JSON.stringify(completionData.invoiceData));
     }
 
     const res = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/complete`, {

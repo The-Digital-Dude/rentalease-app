@@ -10,7 +10,13 @@ import {
   TouchableOpacity,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { fetchTechnicianJobs, completeJob, Job } from "@services/jobs";
+import {
+  fetchTechnicianJobs,
+  completeJob,
+  Job,
+  getAssignedTechnicianName,
+  getPropertyManagerName,
+} from "@services/jobs";
 import { useRouter } from "expo-router";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
 import { FilterPills } from "../../components/FilterPills";
@@ -130,7 +136,6 @@ export default function ActiveJobsPage() {
       Alert.alert(
         "Success", 
         "Job completed successfully!" + 
-        (completionData.hasInvoice ? " Invoice has been created." : "") +
         (completionData.inspectionReportId ? " Report has been uploaded." : ""),
         [{ text: "OK" }]
       );
@@ -413,7 +418,7 @@ export default function ActiveJobsPage() {
                 color={theme.textSecondary}
               />
               <Text style={[styles.detailText, { color: theme.textSecondary }]}>
-                Property Manager: {item.property?.propertyManager?.name || item.property?.agency?.contactPerson || "N/A"}
+                Property Manager: {getPropertyManagerName(item.property)}
               </Text>
             </View>
 
@@ -424,10 +429,7 @@ export default function ActiveJobsPage() {
                 color={theme.textSecondary}
               />
               <Text style={[styles.detailText, { color: theme.textSecondary }]}>
-                Technician: {item.assignedTechnician
-                  ? `${item.assignedTechnician.firstName || ''} ${item.assignedTechnician.lastName || ''}`.trim()
-                  : 'Not Assigned'
-                }
+                Technician: {getAssignedTechnicianName(item)}
               </Text>
             </View>
           </View>

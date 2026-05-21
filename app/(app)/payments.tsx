@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { fetchTechnicianPayments, TechnicianPayment, PaymentFilters } from "@services/payments";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
 import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
@@ -281,21 +281,7 @@ export default function MyPaymentsPage() {
   const styles = createStyles(theme);
 
   if (!TECHNICIAN_PAYMENTS_ENABLED) {
-    return (
-      <View style={styles.emptyState}>
-        <MaterialCommunityIcons
-          name="wallet-outline"
-          size={64}
-          color={theme.textTertiary}
-        />
-        <Text style={[styles.emptyTitle, { color: theme.text }]}>
-          Payments Unavailable
-        </Text>
-        <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-          Technician payments are currently disabled.
-        </Text>
-      </View>
-    );
+    return <Redirect href="/(app)/more" />;
   }
 
   return (

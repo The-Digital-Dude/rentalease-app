@@ -7,11 +7,13 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  TouchableOpacity,
   Dimensions,
   Platform,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { PieChart, BarChart } from "react-native-chart-kit";
+import { useRouter } from "expo-router";
 import { fetchDashboardData, DashboardData } from "@services/dashboard";
 import { getProfile, TechnicianProfile } from "@services/profile";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
@@ -20,6 +22,7 @@ import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 const screenWidth = Dimensions.get("window").width;
 
 export default function HomePage() {
+  const router = useRouter();
   const { theme, isDark } = useTheme();
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(
     null
@@ -27,11 +30,13 @@ export default function HomePage() {
   const [profile, setProfile] = useState<TechnicianProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadDashboardData = async (isRefresh = false) => {
     try {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
+      setError(null);
 
       // Load both dashboard data and profile in parallel
       const [dashboardData, profileData] = await Promise.all([
@@ -44,7 +49,16 @@ export default function HomePage() {
         setProfile(profileData);
       }
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to load dashboard data");
+      const message = error?.message || "Failed to load dashboard data";
+      setError(message);
+
+      if (message.includes("Authentication expired")) {
+        Alert.alert("Session Expired", "Please login again to continue.", [
+          { text: "OK", onPress: () => router.replace("/(auth)/login") },
+        ]);
+      } else if (!isRefresh) {
+        Alert.alert("Error", message);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -70,10 +84,35 @@ export default function HomePage() {
     );
   }
 
+  if (!dashboardData && error) {
+    return (
+      <View style={styles.loadingContainer}>
+        <MaterialCommunityIcons
+          name="alert-circle"
+          size={56}
+          color={theme.error}
+        />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity
+          style={[styles.retryButton, { backgroundColor: theme.primary }]}
+          onPress={() => loadDashboardData(false)}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (!dashboardData) {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.errorText}>No dashboard data available</Text>
+        <TouchableOpacity
+          style={[styles.retryButton, { backgroundColor: theme.primary }]}
+          onPress={() => loadDashboardData(false)}
+        >
+          <Text style={styles.retryButtonText}>Reload</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -475,6 +514,19 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     fontSize: 16,
     color: theme.error,
     textAlign: "center",
+    marginTop: 16,
+    marginBottom: 16,
+    paddingHorizontal: 24,
+  },
+  retryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
   },
   header: {
     paddingHorizontal: 16,
