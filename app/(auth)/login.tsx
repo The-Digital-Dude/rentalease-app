@@ -4,6 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { InputField, PasswordInputField, PrimaryButton, ScreenContainer, Subtitle, Title, LinkText, ThemeToggle } from '@components/UI';
 import { technicianLogin } from '@services/auth';
 import { saveToken } from '@services/secureStore';
+import { registerAndSyncPushToken } from '@services/pushNotifications';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,6 +31,11 @@ export default function LoginPage() {
       console.log('[LoginPage] Attempting login with:', { email: trimmedEmail, passwordLength: password.length });
       const data = await technicianLogin(trimmedEmail, password);
       if (data?.token) await saveToken(data.token);
+      if (data?.token) {
+        void registerAndSyncPushToken("post-login").catch((error) => {
+          console.log("[Push] Post-login registration failed:", error?.message || error);
+        });
+      }
       router.replace('/(app)');
     } catch (e: any) {
       Alert.alert('Login failed', e?.message || 'Invalid email or password');

@@ -5,6 +5,11 @@ import { useRouter } from "expo-router";
 import { technicianLogout } from "../../services/auth";
 import { getProfile, TechnicianProfile } from "../../services/profile";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
+import {
+  getLastPushRegistrationState,
+  registerAndSyncPushToken,
+  type PushRegistrationState,
+} from "../../services/pushNotifications";
 
 function getInitials(profile?: TechnicianProfile | null) {
   const first = (profile?.firstName || "").trim();
@@ -26,6 +31,10 @@ export default function MorePage() {
   const [profile, setProfile] = useState<TechnicianProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pushState, setPushState] = useState<PushRegistrationState>(
+    getLastPushRegistrationState()
+  );
+  const [pushRefreshing, setPushRefreshing] = useState(false);
 
   const loadProfile = async () => {
     try {
@@ -52,6 +61,18 @@ export default function MorePage() {
 
   useEffect(() => {
     loadProfile();
+  }, []);
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setPushState(getLastPushRegistrationState());
+    }, 1000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const handleLogout = async () => {
@@ -141,6 +162,21 @@ export default function MorePage() {
     },
   ];
 
+  const handlePushDebugRefresh = async () => {
+    try {
+      setPushRefreshing(true);
+      await registerAndSyncPushToken("more-screen-debug");
+    } catch (error: any) {
+      Alert.alert(
+        "Push registration failed",
+        error?.message || "Unable to refresh push registration"
+      );
+    } finally {
+      setPushState(getLastPushRegistrationState());
+      setPushRefreshing(false);
+    }
+  };
+
   const styles = createStyles(theme);
 
   if (loading) {
@@ -196,14 +232,14 @@ export default function MorePage() {
         {settingsItems.map((item, index) => (
           <View key={index} style={styles.menuItem}>
             <View style={styles.menuItemLeft}>
-              <MaterialCommunityIcons name={item.icon} size={24} color={theme.textSecondary} />
+              <MaterialCommunityIcons name={item.icon as any} size={24} color={theme.textSecondary} />
               <Text style={styles.menuItemText}>{item.title}</Text>
             </View>
             <Switch
               value={item.value}
               onValueChange={item.onToggle}
               thumbColor={item.value ? theme.primary : theme.background}
-              trackColor={{ false: theme.border, true: theme.primaryLight }}
+              trackColor={{ false: theme.border, true: theme.primary }}
             />
           </View>
         ))}
@@ -215,7 +251,7 @@ export default function MorePage() {
         {menuItems.map((item, index) => (
           <TouchableOpacity key={index} style={styles.menuItem} onPress={item.onPress}>
             <View style={styles.menuItemLeft}>
-              <MaterialCommunityIcons name={item.icon} size={24} color={theme.textSecondary} />
+              <MaterialCommunityIcons name={item.icon as any} size={24} color={theme.textSecondary} />
               <Text style={styles.menuItemText}>{item.title}</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textTertiary} />
@@ -227,6 +263,42 @@ export default function MorePage() {
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
       </View>
+
+      {__DEV__ && (
+        <View style={styles.menuSection}>
+          <Text style={styles.sectionTitle}>Push Debug</Text>
+          <View style={styles.debugCard}>
+            <Text style={styles.debugLine}>Stage: {pushState.stage}</Text>
+            <Text style={styles.debugLine}>
+              Permission: {pushState.permissionStatus || "unknown"}
+            </Text>
+            <Text style={styles.debugLine}>
+              Project: {pushState.projectId || "missing"}
+            </Text>
+            <Text style={styles.debugLine}>
+              Token: {pushState.tokenPreview || "not acquired"}
+            </Text>
+            <Text style={styles.debugLine}>
+              Backend: {pushState.backendRegistered ? "registered" : "not registered"}
+            </Text>
+            <Text style={styles.debugLine}>
+              Reason: {pushState.lastReason || "n/a"}
+            </Text>
+            <Text style={styles.debugLine}>
+              Error: {pushState.lastError || "none"}
+            </Text>
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => void handlePushDebugRefresh()}
+              disabled={pushRefreshing}
+            >
+              <Text style={styles.debugButtonText}>
+                {pushRefreshing ? "Refreshing..." : "Retry Push Registration"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -360,5 +432,32 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     color: theme.error,
     marginLeft: 16,
     fontWeight: '600',
+  },
+  debugCard: {
+    marginHorizontal: 24,
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.card,
+    gap: 6,
+  },
+  debugLine: {
+    color: theme.textSecondary,
+    fontSize: 13,
+  },
+  debugButton: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+  },
+  debugButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

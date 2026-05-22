@@ -6,10 +6,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  AppState,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../../contexts/ThemeContext";
-import { registerForPushNotificationsIfPossible, sendPushTokenToBackend } from "../../services/pushNotifications";
+import { registerAndSyncPushToken } from "../../services/pushNotifications";
 import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
 export default function AppLayout() {
@@ -19,18 +20,32 @@ export default function AppLayout() {
     let cancelled = false;
     (async () => {
       try {
-        const expoToken = await registerForPushNotificationsIfPossible();
+        const expoToken = await registerAndSyncPushToken("app-layout-mount");
         if (!expoToken || cancelled) {
           console.log("[PushDebug] No Expo push token available after registration attempt");
           return;
         }
-        await sendPushTokenToBackend(expoToken);
       } catch (e) {
         console.log("[Push] Registration skipped/failed:", (e as any)?.message || e);
       }
     })();
+
+    const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active" || cancelled) {
+        return;
+      }
+
+      void registerAndSyncPushToken("app-foreground").catch((error) => {
+        console.log(
+          "[Push] Foreground registration skipped/failed:",
+          (error as any)?.message || error
+        );
+      });
+    });
+
     return () => {
       cancelled = true;
+      appStateSubscription.remove();
     };
   }, []);
   
