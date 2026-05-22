@@ -1489,11 +1489,6 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       const completionPayload: JobCompletionData = {};
 
       if (gasV3Submission) {
-        if (!jobCompletionCommitted && job?.status !== "Completed") {
-          await onSubmit(completionPayload);
-          setJobCompletionCommitted(true);
-        }
-
         if (!reportId) {
           const submission = await submitInspectionReport(jobId, {
             template: selectedTemplate,
@@ -1505,6 +1500,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           reportUrl = submission.pdf?.url;
           setInspectionReportId(reportId);
           setInspectionReportUrl(reportUrl);
+        }
+
+        if (!jobCompletionCommitted && job?.status !== "Completed") {
+          completionPayload.inspectionReportId = reportId || undefined;
+          await onSubmit(completionPayload);
+          setJobCompletionCommitted(true);
         }
       } else {
         if (!reportId) {
