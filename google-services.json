@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "519713506096",
+    "project_id": "rentalease-51b72",
+    "storage_bucket": "rentalease-51b72.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519713506096:android:d64674d9b5cff5c15e3ef5",
+        "android_client_info": {
+          "package_name": "com.rentalease.technician"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAl4aTvLEIFSHnOuUyUWE6wLFXG6Lwvhlk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
