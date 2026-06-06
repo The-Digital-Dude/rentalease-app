@@ -7,6 +7,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "installCommand": "pnpm install --frozen-lockfile",
       "ios": {
         "simulator": true
       }
@@ -14,12 +15,14 @@
     "development-device": {
       "developmentClient": true,
       "distribution": "internal",
+      "installCommand": "pnpm install --frozen-lockfile",
       "ios": {
         "simulator": false
       }
     },
     "preview": {
       "distribution": "internal",
+      "installCommand": "pnpm install --frozen-lockfile",
       "android": {
         "buildType": "apk"
       },
@@ -33,6 +36,7 @@
     "production": {
       "distribution": "store",
       "autoIncrement": true,
+      "installCommand": "pnpm install --frozen-lockfile",
       "android": {
         "buildType": "app-bundle"
       },
