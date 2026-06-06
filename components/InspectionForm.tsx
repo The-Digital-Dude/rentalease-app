@@ -247,6 +247,9 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     if (visibleWhen.equals !== undefined) {
       return dependencyValue === visibleWhen.equals;
     }
+    if (visibleWhen.notEquals !== undefined) {
+      return dependencyValue !== visibleWhen.notEquals;
+    }
     return true;
   };
 
