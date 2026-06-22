@@ -173,6 +173,70 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
   );
 };
 
+const IMAGE_PICKER_MEDIA_TYPES: ImagePicker.MediaType[] = ["images"];
+const HEIC_IMAGE_EXTENSIONS = new Set(["heic", "heif"]);
+
+const getExtensionFromValue = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  const cleanValue = value.split("?")[0].split("#")[0];
+  const match = cleanValue.match(/\.([a-zA-Z0-9]+)$/);
+  return match?.[1]?.toLowerCase() || null;
+};
+
+const getMimeTypeFromExtension = (extension?: string | null) => {
+  if (!extension) {
+    return null;
+  }
+
+  if (HEIC_IMAGE_EXTENSIONS.has(extension)) {
+    return `image/${extension}`;
+  }
+
+  if (extension === "jpg" || extension === "jpeg") {
+    return "image/jpeg";
+  }
+
+  if (extension === "png") {
+    return "image/png";
+  }
+
+  return null;
+};
+
+const getExtensionFromMimeType = (mimeType?: string | null) => {
+  const extension = mimeType?.split("/").pop()?.toLowerCase();
+  if (!extension) {
+    return null;
+  }
+
+  return extension === "jpeg" ? "jpg" : extension;
+};
+
+const createInspectionMediaUpload = (
+  asset: ImagePicker.ImagePickerAsset,
+  field: InspectionField,
+  index?: number
+): InspectionMediaUpload => {
+  const extension =
+    getExtensionFromValue(asset.fileName) ||
+    getExtensionFromValue(asset.uri) ||
+    getExtensionFromMimeType(asset.mimeType) ||
+    "jpg";
+  const nameSuffix = index === undefined ? "" : `-${index + 1}`;
+  const name = asset.fileName || `${field.id}-${Date.now()}${nameSuffix}.${extension}`;
+  const type = asset.mimeType || getMimeTypeFromExtension(extension) || "image/jpeg";
+
+  return {
+    uri: asset.uri,
+    name,
+    type,
+    size: asset.fileSize,
+  };
+};
+
 interface InspectionFormProps {
   template: InspectionTemplate;
   values: InspectionFormValues;
@@ -336,6 +400,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
       console.log("[InspectionForm] Launching camera...");
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: IMAGE_PICKER_MEDIA_TYPES,
         quality: 0.7,
         allowsEditing: true,
         aspect: [4, 3],
@@ -345,14 +410,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
       if (!result.canceled && result.assets?.length) {
         const asset = result.assets[0];
-        const media: InspectionMediaUpload = {
-          uri: asset.uri,
-          name:
-            asset.fileName ||
-            `${field.id}-${Date.now()}.${asset.mimeType?.split("/").pop() || "jpg"}`,
-          type: asset.mimeType || "image/jpeg",
-          size: asset.fileSize,
-        };
+        const media = createInspectionMediaUpload(asset, field);
         console.log("[InspectionForm] Adding media:", media);
         onAddMedia(sectionId, field.id, media, itemIndex);
       }
@@ -385,6 +443,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       console.log("[InspectionForm] Launching photo library...");
       const allowsMultipleSelection = field.type === "photo-multi";
       const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: IMAGE_PICKER_MEDIA_TYPES,
         allowsMultipleSelection,
         quality: 0.7,
         allowsEditing: !allowsMultipleSelection,
@@ -395,14 +454,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
       if (!result.canceled && result.assets?.length) {
         result.assets.forEach((asset, index) => {
-          const media: InspectionMediaUpload = {
-            uri: asset.uri,
-            name:
-              asset.fileName ||
-              `${field.id}-${Date.now()}-${index + 1}.${asset.mimeType?.split("/").pop() || "jpg"}`,
-            type: asset.mimeType || "image/jpeg",
-            size: asset.fileSize,
-          };
+          const media = createInspectionMediaUpload(asset, field, index);
           console.log("[InspectionForm] Adding media:", media);
           onAddMedia(sectionId, field.id, media, itemIndex);
         });

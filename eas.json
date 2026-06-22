@@ -28,7 +28,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://rentalease-cloud-server.onrender.com"
-      }
+      },
+      "channel": "preview"
     },
     "production": {
       "distribution": "store",
@@ -38,7 +39,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://rentalease-cloud-server.onrender.com"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {
