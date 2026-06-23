@@ -444,7 +444,7 @@ export default function ActiveJobsPage() {
           )}
 
           <View style={styles.jobActions}>
-            {(item.status === "Scheduled" || item.status === "In Progress") &&
+            {(item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue") &&
               canCompleteJob() && (
                 <TouchableOpacity
                   style={[
