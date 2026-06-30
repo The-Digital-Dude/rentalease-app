@@ -1,6 +1,37 @@
 import { getToken } from "./secureStore";
 import { BASE_URL } from "../config/api";
 
+const parseApiResponseBody = async (res: Response) => {
+  const rawBody = await res.text();
+  const contentType = res.headers.get("content-type") || "";
+
+  if (!rawBody) {
+    return { json: null, rawBody, contentType };
+  }
+
+  if (contentType.toLowerCase().includes("application/json")) {
+    return {
+      json: JSON.parse(rawBody),
+      rawBody,
+      contentType,
+    };
+  }
+
+  try {
+    return {
+      json: JSON.parse(rawBody),
+      rawBody,
+      contentType,
+    };
+  } catch {
+    return {
+      json: null,
+      rawBody,
+      contentType,
+    };
+  }
+};
+
 export type Job = {
   id: string;
   job_id: string;
@@ -588,9 +619,12 @@ export const submitInspectionReport = async (
     body: formData,
   });
 
-  const json = await res.json();
+  const { json, rawBody, contentType } = await parseApiResponseBody(res);
   if (!res.ok) {
-    throw new Error(json?.message || "Failed to submit inspection report");
+    throw new Error(
+      json?.message ||
+        `Failed to submit inspection report (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+    );
   }
 
   return json.data;
@@ -869,7 +903,7 @@ export async function completeJob(
     }
 
     const res = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/complete`, {
-      method: "PATCH",
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         // Don't set Content-Type for FormData, let the browser set it
@@ -877,11 +911,14 @@ export async function completeJob(
       body: formData,
     });
 
-    const json = await res.json();
+    const { json, rawBody, contentType } = await parseApiResponseBody(res);
     console.log("[completeJob] Response:", JSON.stringify(json, null, 2));
 
     if (!res.ok) {
-      throw new Error(json?.message || "Failed to complete job");
+      throw new Error(
+        json?.message ||
+          `Failed to complete job (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+      );
     }
 
     return json.data || json;
