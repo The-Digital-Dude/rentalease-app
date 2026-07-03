@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   TouchableOpacity,
+  Platform,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
@@ -540,7 +541,7 @@ export default function ActiveJobsPage() {
       ) : (
         <FlatList
           data={jobs}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item.id || (item as any)._id || `${item.job_id || "job"}-${index}`}
           renderItem={renderJobCard}
           refreshControl={
             <RefreshControl
@@ -559,7 +560,7 @@ export default function ActiveJobsPage() {
               { paddingBottom: 100 },
             ],
           ]}
-          removeClippedSubviews={true}
+          removeClippedSubviews={Platform.OS === "android"}
           maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
           initialNumToRender={5}

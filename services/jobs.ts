@@ -977,10 +977,12 @@ export async function fetchTechnicianJobs(
     });
 
     const json = await res.json();
-    console.log(
-      "[fetchTechnicianJobs] Response:",
-      JSON.stringify(json, null, 2)
-    );
+    console.log("[fetchTechnicianJobs] Response summary:", {
+      status: json?.status,
+      jobsCount: Array.isArray(json?.data?.jobs) ? json.data.jobs.length : 0,
+      page: json?.data?.pagination?.page || null,
+      total: json?.data?.pagination?.total || null,
+    });
 
     if (!res.ok) {
       // Handle specific authentication errors
