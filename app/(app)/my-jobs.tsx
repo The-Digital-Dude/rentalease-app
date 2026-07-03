@@ -20,7 +20,7 @@ import {
 import { useRouter } from "expo-router";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
 import { FilterPills } from "../../components/FilterPills";
-import { JobCompletionModal, JobCompletionData } from "../../components/JobCompletionModal";
+import type { JobCompletionData } from "../../components/JobCompletionModal";
 
 export default function ActiveJobsPage() {
   const router = useRouter();
@@ -573,6 +573,10 @@ export default function ActiveJobsPage() {
         // Always use the MongoDB ObjectId (selectedJobForCompletion.id), not the human-readable job_id
         const jobId = selectedJobForCompletion.id || (selectedJobForCompletion as any)._id;
         const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
+        const JobCompletionModal =
+          showCompletionModal
+            ? require("../../components/JobCompletionModal").JobCompletionModal
+            : null;
 
         console.log("[MyJobs] Modal rendering with job:", {
           'job.id (MongoDB ObjectId)': selectedJobForCompletion.id,
@@ -585,6 +589,10 @@ export default function ActiveJobsPage() {
 
         if (!isValidObjectId) {
           console.error("[MyJobs] ERROR: Invalid MongoDB ObjectId format:", jobId);
+        }
+
+        if (!JobCompletionModal) {
+          return null;
         }
 
         return (
