@@ -12,7 +12,6 @@ import {
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   fetchTechnicianJobs,
-  completeJob,
   Job,
   getAssignedTechnicianName,
   getPropertyManagerName,
@@ -102,29 +101,8 @@ export default function ActiveJobsPage() {
     if (!selectedJobForCompletion) return;
 
     try {
-      // Always use the MongoDB ObjectId, not the human-readable job_id
       const jobId = selectedJobForCompletion.id || (selectedJobForCompletion as any)._id;
-      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
-
-      console.log("[MyJobs] Completing job with ID analysis:", {
-        'job.id (MongoDB ObjectId)': selectedJobForCompletion.id,
-        'job.job_id (human-readable)': selectedJobForCompletion.job_id,
-        'job._id': (selectedJobForCompletion as any)._id,
-        finalJobId: jobId,
-        isValidObjectId: isValidObjectId,
-        completionData: completionData
-      });
-
-      if (!isValidObjectId) {
-        console.error("[MyJobs] ERROR: Invalid MongoDB ObjectId format:", jobId);
-        Alert.alert("Error", "Invalid job ID format. Please try again or contact support.");
-        return;
-      }
-
-      const result = await completeJob(jobId, completionData);
-      console.log("[MyJobs] Job completed successfully:", result);
       
-      // Update local jobs state using the same ID logic
       setJobs(prevJobs =>
         prevJobs.map(job =>
           job.id === jobId
@@ -132,24 +110,14 @@ export default function ActiveJobsPage() {
             : job
         )
       );
-      
-      Alert.alert(
-        "Success", 
-        "Job completed successfully!" + 
-        (completionData.inspectionReportId ? " Report has been uploaded." : ""),
-        [{ text: "OK" }]
-      );
-      
-      // Close modal and reset selected job
+
       setShowCompletionModal(false);
       setSelectedJobForCompletion(null);
-      
-      // Refresh jobs list
+
       loadJobs(false, selectedStatus);
     } catch (error: any) {
       console.log("[MyJobs] Error completing job:", error);
-      Alert.alert("Error", error.message || "Failed to complete job");
-      throw error; // Re-throw to let modal handle the error state
+      throw error;
     }
   };
 

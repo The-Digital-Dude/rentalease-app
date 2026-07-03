@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
-import { fetchJobDetails, claimJob, completeJob, Job } from "@services/jobs";
+import { fetchJobDetails, claimJob, Job } from "@services/jobs";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
   JobCompletionData,
@@ -408,53 +408,15 @@ export default function JobDetailsPage() {
     if (!job) return;
 
     try {
-      console.log("[JobDetails] Full job object:", JSON.stringify(job, null, 2));
-      console.log(job, "Job Data...");
-
-      // Always prioritize job.id (MongoDB ObjectId) over job_id (human-readable)
       const cleanId = Array.isArray(id) ? id[0] : id;
       const jobId = job.id || (job as any)._id || cleanId;
-      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
 
-      console.log("[JobDetails] ID Analysis:", {
-        'job.id (MongoDB ObjectId)': job.id,
-        'job.job_id (human-readable)': job.job_id,
-        'job._id': (job as any)._id,
-        urlParamId: id,
-        cleanId: cleanId,
-        finalJobId: jobId,
-        jobIdLength: jobId?.length,
-        isValidObjectId: isValidObjectId
-      });
-
-      if (!isValidObjectId) {
-        console.error("[JobDetails] ERROR: Using invalid ObjectId format:", jobId);
-        Alert.alert("Error", "Invalid job ID format. Please try again or contact support.");
-        return;
-      }
-
-      console.log("[JobDetails] Completing job with data:", completionData);
-      const result = await completeJob(jobId, completionData);
-      console.log("[JobDetails] Job completed successfully:", result);
-
-      // Update local job state
       setJob((prev) => (prev ? { ...prev, status: "Completed" } : prev));
 
-      Alert.alert(
-        "Success",
-        "Job completed successfully!" +
-          (completionData.inspectionReportId
-            ? " Inspection report has been submitted."
-            : ""),
-        [{ text: "OK" }]
-      );
-
-      // Refresh job data
       await loadJobDetails();
     } catch (error: any) {
       console.log("[JobDetails] Error completing job:", error);
-      Alert.alert("Error", error.message || "Failed to complete job");
-      throw error; // Re-throw to let modal handle the error state
+      throw error;
     }
   };
 

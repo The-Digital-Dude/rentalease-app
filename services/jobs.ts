@@ -327,6 +327,7 @@ export type JobInspectionTemplateResponse = {
 };
 
 export type InspectionMediaUpload = {
+  clientMediaId?: string;
   uri: string;
   name: string;
   type: string;
@@ -338,7 +339,16 @@ export type InspectionSubmissionPayload = {
   formValues: Record<string, any>;
   mediaByField: Record<string, InspectionMediaUpload[]>;
   notes?: string;
+  nextComplianceDate?: string;
+  eventLocalTimestamp?: string;
+  eventTimezone?: string;
+  timestampSource?: string;
 };
+
+export type InspectionCompletionSubmissionPayload =
+  InspectionSubmissionPayload & {
+    clientSubmissionId: string;
+  };
 
 export type InspectionReportSummary = {
   id: string;
@@ -469,21 +479,42 @@ const normalizeSubmissionFormData = (
   return normalized;
 };
 
-export const submitInspectionReport = async (
-  jobId: string,
-  payload: InspectionSubmissionPayload
-): Promise<{
-  report: InspectionReportSummary;
-  pdf?: { url?: string };
-}> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
+const createFallbackClientMediaId = (
+  fieldKey: string,
+  media: InspectionMediaUpload,
+  index: number
+) => {
+  const source = media.uri || media.name || `${fieldKey}-${index}`;
+  const normalized = source.replace(/[^a-zA-Z0-9]+/g, "-").slice(-48);
+  return `${fieldKey}-${index}-${normalized}`;
+};
 
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
+export const normalizeInspectionMediaByField = (
+  mediaByField: Record<string, InspectionMediaUpload[]>
+): Record<string, InspectionMediaUpload[]> =>
+  Object.fromEntries(
+    Object.entries(mediaByField || {}).map(([fieldKey, items]) => [
+      fieldKey,
+      (items || []).map((media, index) => ({
+        ...media,
+        clientMediaId:
+          media.clientMediaId || createFallbackClientMediaId(fieldKey, media, index),
+      })),
+    ])
+  );
 
-  const formData = new FormData();
+const buildOrderedClientMediaIds = (items: InspectionMediaUpload[]) =>
+  items
+    .map((item) => item.clientMediaId)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+const appendInspectionSubmissionPayload = (
+  formData: FormData,
+  payload: InspectionSubmissionPayload,
+  options: {
+    includeClientSubmissionId?: string;
+  } = {}
+) => {
   formData.append("jobType", payload.template.jobType);
   formData.append("templateVersion", String(payload.template.version));
   const normalizedFormData = normalizeSubmissionFormData(
@@ -494,6 +525,26 @@ export const submitInspectionReport = async (
 
   if (payload.notes) {
     formData.append("notes", payload.notes);
+  }
+
+  if (payload.nextComplianceDate) {
+    formData.append("nextComplianceDate", payload.nextComplianceDate);
+  }
+
+  if (payload.eventLocalTimestamp) {
+    formData.append("eventLocalTimestamp", payload.eventLocalTimestamp);
+  }
+
+  if (payload.eventTimezone) {
+    formData.append("eventTimezone", payload.eventTimezone);
+  }
+
+  if (payload.timestampSource) {
+    formData.append("timestampSource", payload.timestampSource);
+  }
+
+  if (options.includeClientSubmissionId) {
+    formData.append("clientSubmissionId", options.includeClientSubmissionId);
   }
 
   const mediaMeta: Record<string, any> = {};
@@ -510,6 +561,7 @@ export const submitInspectionReport = async (
         metadata: {
           ...metadata,
           count: items.length,
+          clientMediaIds: buildOrderedClientMediaIds(items),
         },
       };
 
@@ -529,7 +581,7 @@ export const submitInspectionReport = async (
         ? payload.formValues[section.id]
         : [];
 
-      sectionItems.forEach((_, itemIndex) => {
+      sectionItems.forEach((_: unknown, itemIndex: number) => {
         section.fields.forEach((field) => {
           const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
           const items = payload.mediaByField[storageKey];
@@ -556,7 +608,7 @@ export const submitInspectionReport = async (
           (column) => column.type === "photo" || column.type === "photo-multi"
         );
 
-        rows.forEach((_, rowIndex) => {
+        rows.forEach((_: unknown, rowIndex: number) => {
           photoColumns.forEach((column) => {
             const nestedFieldId = `${field.id}.${column.id}`;
             const storageKey = getMediaStorageKey(
@@ -596,6 +648,140 @@ export const submitInspectionReport = async (
   if (Object.keys(mediaMeta).length) {
     formData.append("mediaMeta", JSON.stringify(mediaMeta));
   }
+};
+
+export const createInspectionSubmission = async (
+  jobId: string,
+  payload: InspectionCompletionSubmissionPayload
+): Promise<{
+  submissionId: string;
+  status: string;
+  uploadedMediaCount: number;
+  inspectionReportId?: string | null;
+}> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const res = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/inspection-submissions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      clientSubmissionId: payload.clientSubmissionId,
+      jobType: payload.template.jobType,
+      templateVersion: payload.template.version,
+      formData: payload.formValues,
+      notes: payload.notes,
+      nextComplianceDate: payload.nextComplianceDate,
+      eventLocalTimestamp: payload.eventLocalTimestamp,
+      eventTimezone: payload.eventTimezone,
+      timestampSource: payload.timestampSource,
+    }),
+  });
+
+  const { json, rawBody, contentType } = await parseApiResponseBody(res);
+  if (!res.ok) {
+    throw new Error(
+      json?.message ||
+        `Failed to create inspection submission (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+    );
+  }
+
+  return json.data;
+};
+
+export const uploadInspectionSubmissionMediaBatch = async (
+  submissionId: string,
+  payload: InspectionSubmissionPayload
+): Promise<{
+  submissionId: string;
+  uploadedBatchCount: number;
+  uploadedMediaCount: number;
+  status: string;
+}> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const formData = new FormData();
+  appendInspectionSubmissionPayload(formData, payload);
+
+  const res = await fetch(
+    `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/media-batch`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    }
+  );
+
+  const { json, rawBody, contentType } = await parseApiResponseBody(res);
+  if (!res.ok) {
+    throw new Error(
+      json?.message ||
+        `Failed to upload inspection media batch (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+    );
+  }
+
+  return json.data;
+};
+
+export const finalizeInspectionSubmission = async (submissionId: string): Promise<any> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const res = await fetch(
+    `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/finalize`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  const { json, rawBody, contentType } = await parseApiResponseBody(res);
+  if (!res.ok) {
+    throw new Error(
+      json?.message ||
+        `Failed to finalize inspection submission (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+    );
+  }
+
+  return json.data || json;
+};
+
+export const submitInspectionReport = async (
+  jobId: string,
+  payload: InspectionSubmissionPayload
+): Promise<{
+  report: InspectionReportSummary;
+  pdf?: { url?: string };
+}> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const formData = new FormData();
+  appendInspectionSubmissionPayload(formData, payload);
 
   const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
   console.log("[submitInspectionReport] Request details:", {
@@ -628,6 +814,44 @@ export const submitInspectionReport = async (
   }
 
   return json.data;
+};
+
+export const completeJobWithInspectionSubmission = async (
+  jobId: string,
+  payload: InspectionCompletionSubmissionPayload
+): Promise<any> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const formData = new FormData();
+  appendInspectionSubmissionPayload(formData, payload, {
+    includeClientSubmissionId: payload.clientSubmissionId,
+  });
+
+  const res = await fetch(
+    `${baseUrl}/api/v1/jobs/${jobId}/complete-with-inspection`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    }
+  );
+
+  const { json, rawBody, contentType } = await parseApiResponseBody(res);
+  if (!res.ok) {
+    throw new Error(
+      json?.message ||
+        `Failed to complete inspection job (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
+    );
+  }
+
+  return json.data || json;
 };
 
 // Fetch available jobs

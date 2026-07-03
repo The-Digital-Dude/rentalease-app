@@ -12,6 +12,8 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system/legacy";
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTheme } from "../contexts/ThemeContext";
 import SignatureCapture from './SignatureCapture';
@@ -174,6 +176,8 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
 };
 
 const IMAGE_PICKER_MEDIA_TYPES: ImagePicker.MediaType[] = ["images"];
+const MAX_INSPECTION_IMAGE_DIMENSION = 1920;
+const INSPECTION_IMAGE_COMPRESS_QUALITY = 0.65;
 const HEIC_IMAGE_EXTENSIONS = new Set(["heic", "heif"]);
 
 const getExtensionFromValue = (value?: string | null) => {
@@ -215,6 +219,9 @@ const getExtensionFromMimeType = (mimeType?: string | null) => {
   return extension === "jpeg" ? "jpg" : extension;
 };
 
+const createClientMediaId = (fieldId: string) =>
+  `${fieldId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
 const createInspectionMediaUpload = (
   asset: ImagePicker.ImagePickerAsset,
   field: InspectionField,
@@ -230,11 +237,60 @@ const createInspectionMediaUpload = (
   const type = asset.mimeType || getMimeTypeFromExtension(extension) || "image/jpeg";
 
   return {
+    clientMediaId: createClientMediaId(field.id),
     uri: asset.uri,
     name,
     type,
     size: asset.fileSize,
   };
+};
+
+const prepareInspectionMediaUpload = async (
+  asset: ImagePicker.ImagePickerAsset,
+  field: InspectionField,
+  index?: number
+): Promise<InspectionMediaUpload> => {
+  const fallbackMedia = createInspectionMediaUpload(asset, field, index);
+  const width = asset.width || 0;
+  const height = asset.height || 0;
+  const longestEdge = Math.max(width, height);
+
+  try {
+    const actions =
+      longestEdge > MAX_INSPECTION_IMAGE_DIMENSION
+        ? [
+            width >= height
+              ? { resize: { width: MAX_INSPECTION_IMAGE_DIMENSION } }
+              : { resize: { height: MAX_INSPECTION_IMAGE_DIMENSION } },
+          ]
+        : [];
+
+    const result = await ImageManipulator.manipulateAsync(
+      asset.uri,
+      actions,
+      {
+        compress: INSPECTION_IMAGE_COMPRESS_QUALITY,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+    const fileInfo = await FileSystem.getInfoAsync(result.uri);
+    const nameSuffix = index === undefined ? "" : `-${index + 1}`;
+
+    return {
+      clientMediaId: fallbackMedia.clientMediaId,
+      uri: result.uri,
+      name: `${field.id}-${Date.now()}${nameSuffix}.jpg`,
+      type: "image/jpeg",
+      size: fileInfo.exists ? fileInfo.size : fallbackMedia.size,
+    };
+  } catch (error) {
+    console.warn("[InspectionForm] Failed to preprocess image", {
+      fieldId: field.id,
+      uri: asset.uri,
+      error: (error as any)?.message || error,
+    });
+    return fallbackMedia;
+  }
 };
 
 interface InspectionFormProps {
@@ -410,7 +466,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
       if (!result.canceled && result.assets?.length) {
         const asset = result.assets[0];
-        const media = createInspectionMediaUpload(asset, field);
+        const media = await prepareInspectionMediaUpload(asset, field);
         console.log("[InspectionForm] Adding media:", media);
         onAddMedia(sectionId, field.id, media, itemIndex);
       }
@@ -453,11 +509,11 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       console.log("[InspectionForm] Photo library result:", result);
 
       if (!result.canceled && result.assets?.length) {
-        result.assets.forEach((asset, index) => {
-          const media = createInspectionMediaUpload(asset, field, index);
+        for (const [index, asset] of result.assets.entries()) {
+          const media = await prepareInspectionMediaUpload(asset, field, index);
           console.log("[InspectionForm] Adding media:", media);
           onAddMedia(sectionId, field.id, media, itemIndex);
-        });
+        }
       }
     } catch (error) {
       console.error("[InspectionForm] Photo library error:", error);
@@ -1400,7 +1456,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
 
             {section.repeatable ? (
               <View style={styles.repeatableSection}>
-                {repeatableItems.map((item, itemIndex) => {
+                {repeatableItems.map((item: Record<string, any>, itemIndex: number) => {
                   const summaryFieldId = section.metadata?.summaryFieldId;
                   const summaryValue = summaryFieldId ? item?.[summaryFieldId] : null;
                   const minimumItems = section.minItems || 0;
