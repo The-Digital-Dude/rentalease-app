@@ -462,8 +462,8 @@ export default function JobDetailsPage() {
   const canCompleteJob = () => {
     if (!job) return false;
 
-    // Only scheduled or in progress jobs can be completed
-    if (job.status !== "Scheduled" && job.status !== "In Progress") {
+    // Only scheduled, in progress, or overdue jobs can be completed
+    if (job.status !== "Scheduled" && job.status !== "In Progress" && job.status !== "Overdue") {
       return false;
     }
 
