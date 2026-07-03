@@ -9,44 +9,25 @@ import {
   AppState,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import NetInfo from "@react-native-community/netinfo";
 import { useTheme } from "../../contexts/ThemeContext";
 import { registerAndSyncPushToken } from "../../services/pushNotifications";
-import { processPendingInspectionSyncQueue } from "../../services/inspectionSync";
 import { TECHNICIAN_PAYMENTS_ENABLED } from "../../config/features";
 
 export default function AppLayout() {
   const { theme } = useTheme();
-  const lastNetworkSyncAtRef = React.useRef(0);
 
   React.useEffect(() => {
     let cancelled = false;
-    const triggerInspectionSync = async (reason: string) => {
-      const now = Date.now();
-      if (now - lastNetworkSyncAtRef.current < 5000) {
-        return;
-      }
-
-      lastNetworkSyncAtRef.current = now;
-      await processPendingInspectionSyncQueue().catch((error) => {
-        console.log(
-          `[InspectionSync] ${reason} sync skipped/failed:`,
-          (error as any)?.message || error
-        );
-      });
-    };
-
     (async () => {
       try {
         const expoToken = await registerAndSyncPushToken("app-layout-mount");
         if (!expoToken || cancelled) {
           console.log("[PushDebug] No Expo push token available after registration attempt");
+          return;
         }
       } catch (e) {
         console.log("[Push] Registration skipped/failed:", (e as any)?.message || e);
       }
-
-      await triggerInspectionSync("initial");
     })();
 
     const appStateSubscription = AppState.addEventListener("change", (nextState) => {
@@ -60,22 +41,11 @@ export default function AppLayout() {
           (error as any)?.message || error
         );
       });
-
-      void triggerInspectionSync("foreground");
-    });
-
-    const networkSubscription = NetInfo.addEventListener((state) => {
-      if (cancelled || !state.isConnected || !state.isInternetReachable) {
-        return;
-      }
-
-      void triggerInspectionSync("network-reconnected");
     });
 
     return () => {
       cancelled = true;
       appStateSubscription.remove();
-      networkSubscription();
     };
   }, []);
   
@@ -95,7 +65,7 @@ export default function AppLayout() {
           position: "absolute",
           ...Platform.select({
             ios: {
-              shadowColor: theme.border,
+              shadowColor: theme.shadow,
               shadowOffset: {
                 width: 0,
                 height: -2,

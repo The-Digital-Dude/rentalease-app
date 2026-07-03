@@ -8,11 +8,11 @@ import {
   ActivityIndicator,
   Alert,
   TouchableOpacity,
-  Platform,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   fetchTechnicianJobs,
+  completeJob,
   Job,
   getAssignedTechnicianName,
   getPropertyManagerName,
@@ -20,7 +20,7 @@ import {
 import { useRouter } from "expo-router";
 import { useTheme, Theme } from "../../contexts/ThemeContext";
 import { FilterPills } from "../../components/FilterPills";
-import type { JobCompletionData } from "../../components/JobCompletionModal";
+import { JobCompletionModal, JobCompletionData } from "../../components/JobCompletionModal";
 
 export default function ActiveJobsPage() {
   const router = useRouter();
@@ -102,8 +102,29 @@ export default function ActiveJobsPage() {
     if (!selectedJobForCompletion) return;
 
     try {
+      // Always use the MongoDB ObjectId, not the human-readable job_id
       const jobId = selectedJobForCompletion.id || (selectedJobForCompletion as any)._id;
+      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
+
+      console.log("[MyJobs] Completing job with ID analysis:", {
+        'job.id (MongoDB ObjectId)': selectedJobForCompletion.id,
+        'job.job_id (human-readable)': selectedJobForCompletion.job_id,
+        'job._id': (selectedJobForCompletion as any)._id,
+        finalJobId: jobId,
+        isValidObjectId: isValidObjectId,
+        completionData: completionData
+      });
+
+      if (!isValidObjectId) {
+        console.error("[MyJobs] ERROR: Invalid MongoDB ObjectId format:", jobId);
+        Alert.alert("Error", "Invalid job ID format. Please try again or contact support.");
+        return;
+      }
+
+      const result = await completeJob(jobId, completionData);
+      console.log("[MyJobs] Job completed successfully:", result);
       
+      // Update local jobs state using the same ID logic
       setJobs(prevJobs =>
         prevJobs.map(job =>
           job.id === jobId
@@ -111,14 +132,24 @@ export default function ActiveJobsPage() {
             : job
         )
       );
-
+      
+      Alert.alert(
+        "Success", 
+        "Job completed successfully!" + 
+        (completionData.inspectionReportId ? " Report has been uploaded." : ""),
+        [{ text: "OK" }]
+      );
+      
+      // Close modal and reset selected job
       setShowCompletionModal(false);
       setSelectedJobForCompletion(null);
-
+      
+      // Refresh jobs list
       loadJobs(false, selectedStatus);
     } catch (error: any) {
       console.log("[MyJobs] Error completing job:", error);
-      throw error;
+      Alert.alert("Error", error.message || "Failed to complete job");
+      throw error; // Re-throw to let modal handle the error state
     }
   };
 
@@ -413,7 +444,7 @@ export default function ActiveJobsPage() {
           )}
 
           <View style={styles.jobActions}>
-            {(item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue") &&
+            {(item.status === "Scheduled" || item.status === "In Progress") &&
               canCompleteJob() && (
                 <TouchableOpacity
                   style={[
@@ -541,7 +572,7 @@ export default function ActiveJobsPage() {
       ) : (
         <FlatList
           data={jobs}
-          keyExtractor={(item, index) => item.id || (item as any)._id || `${item.job_id || "job"}-${index}`}
+          keyExtractor={(item) => item.id}
           renderItem={renderJobCard}
           refreshControl={
             <RefreshControl
@@ -560,7 +591,7 @@ export default function ActiveJobsPage() {
               { paddingBottom: 100 },
             ],
           ]}
-          removeClippedSubviews={Platform.OS === "android"}
+          removeClippedSubviews={true}
           maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
           initialNumToRender={5}
@@ -573,10 +604,6 @@ export default function ActiveJobsPage() {
         // Always use the MongoDB ObjectId (selectedJobForCompletion.id), not the human-readable job_id
         const jobId = selectedJobForCompletion.id || (selectedJobForCompletion as any)._id;
         const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
-        const JobCompletionModal =
-          showCompletionModal
-            ? require("../../components/JobCompletionModal").JobCompletionModal
-            : null;
 
         console.log("[MyJobs] Modal rendering with job:", {
           'job.id (MongoDB ObjectId)': selectedJobForCompletion.id,
@@ -589,10 +616,6 @@ export default function ActiveJobsPage() {
 
         if (!isValidObjectId) {
           console.error("[MyJobs] ERROR: Invalid MongoDB ObjectId format:", jobId);
-        }
-
-        if (!JobCompletionModal) {
-          return null;
         }
 
         return (

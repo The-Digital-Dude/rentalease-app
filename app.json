@@ -2,7 +2,7 @@
   "expo": {
     "name": "RentalEase Technician",
     "slug": "RentalEase_Technician",
-    "version": "1.0.12",
+    "version": "1.0.7",
     "owner": "juhan.rokoautomations",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -21,7 +21,7 @@
       "icon": "./assets/icon.png",
       "supportsTablet": false,
       "bundleIdentifier": "com.rentalease.technician",
-      "buildNumber": "24",
+      "buildNumber": "19",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UILaunchStoryboardName": "SplashScreen",
@@ -45,8 +45,7 @@
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR"
       ],
-      "package": "com.rentalease.technician",
-      "versionCode": 24
+      "package": "com.rentalease.technician"
     },
     "web": {
       "favicon": "./assets/favicon.png"

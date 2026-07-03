@@ -25,15 +25,10 @@ import {
   fetchInspectionTemplates,
   fetchInspectionTemplate,
   fetchJobInspectionTemplate,
-  completeJobWithInspectionSubmission,
+  submitInspectionReport,
   fetchJobDetails,
   getMediaStorageKey,
-  normalizeInspectionMediaByField,
 } from "../services/jobs";
-import {
-  enqueuePendingInspectionSync,
-  shouldQueueInspectionSyncError,
-} from "../services/inspectionSync";
 
 export interface InvoiceLineItem {
   id: string;
@@ -158,75 +153,6 @@ const splitNestedTableMediaFieldId = (fieldId: string) => {
 };
 
 const getDraftKey = (jobId: string) => `${DRAFT_KEY_PREFIX}${jobId}`;
-const createClientSubmissionId = (jobId: string) =>
-  `${jobId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-const formatLocalTimestamp = (value: Date) => {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  const hours = String(value.getHours()).padStart(2, "0");
-  const minutes = String(value.getMinutes()).padStart(2, "0");
-  const seconds = String(value.getSeconds()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-};
-
-const findNextComplianceDateValue = (value: any): string | undefined => {
-  const candidateKeys = new Set([
-    "next-service-due",
-    "certification-next-inspection-due",
-    "next-inspection-date",
-    "nextComplianceDate",
-  ]);
-  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-
-  const visit = (current: any): string | undefined => {
-    if (!current) {
-      return undefined;
-    }
-
-    if (Array.isArray(current)) {
-      for (const item of current) {
-        const found = visit(item);
-        if (found) {
-          return found;
-        }
-      }
-      return undefined;
-    }
-
-    if (typeof current !== "object") {
-      return undefined;
-    }
-
-    for (const [key, nestedValue] of Object.entries(current)) {
-      if (candidateKeys.has(key) && typeof nestedValue === "string" && datePattern.test(nestedValue)) {
-        return nestedValue;
-      }
-
-      const found = visit(nestedValue);
-      if (found) {
-        return found;
-      }
-    }
-
-    return undefined;
-  };
-
-  return visit(value);
-};
-
-const buildInspectionSubmissionMetadata = (formValues: InspectionFormValues) => {
-  const submittedAt = new Date();
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-  return {
-    nextComplianceDate: findNextComplianceDateValue(formValues),
-    eventLocalTimestamp: formatLocalTimestamp(submittedAt),
-    eventTimezone: timezone || undefined,
-    timestampSource: "device_auto",
-  } as const;
-};
 
 const ensureDraftMediaDirectory = async () => {
   if (!DRAFT_MEDIA_DIR) {
@@ -968,12 +894,18 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const canCompleteJob = () => {
     if (!job) return true; // If no job data provided, assume it can be completed (fallback)
 
-    // Keep frontend validation aligned with backend completion rules.
-    return (
-      job.status === "Scheduled" ||
-      job.status === "In Progress" ||
-      job.status === "Overdue"
-    );
+    // Only scheduled or in progress jobs can be completed
+    if (job.status !== "Scheduled" && job.status !== "In Progress") {
+      return false;
+    }
+
+    // Check if job is due (due date is today or past)
+    const today = new Date();
+    const dueDate = new Date(job.dueDate);
+    today.setHours(0, 0, 0, 0);
+    dueDate.setHours(0, 0, 0, 0);
+
+    return dueDate <= today;
   };
 
   const { theme, isDark } = useTheme();
@@ -1150,7 +1082,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setBedroomCount(draft.bedroomCount || 1);
     setBathroomCount(draft.bathroomCount || 1);
     setFormValues(draft.formValues || {});
-    setMediaByField(normalizeInspectionMediaByField(draft.mediaByField || {}));
+    setMediaByField(draft.mediaByField || {});
     setNotes(draft.notes || "");
     setInspectionReportId(draft.inspectionReportId || null);
     setInspectionReportUrl(draft.inspectionReportUrl);
@@ -1498,6 +1430,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       Alert.alert("Template missing", "Select a template before submitting.");
       return;
     }
+    const gasV3Submission = isGasTemplateV3(selectedTemplate);
     const missing = validateRequiredFields(
       selectedTemplate,
       formValues,
@@ -1514,9 +1447,6 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       return;
     }
 
-    const clientSubmissionId = createClientSubmissionId(jobId);
-    const submissionMetadata = buildInspectionSubmissionMetadata(formValues);
-
     try {
       setIsSubmitting(true);
 
@@ -1526,15 +1456,23 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         job?.status !== "Completed" &&
         !canCompleteJob()
       ) {
-        if (
+        const today = new Date();
+        const dueDate = job ? new Date(job.dueDate) : today;
+        const isNotDue = dueDate > today;
+
+        if (isNotDue) {
+          Alert.alert(
+            "Job Not Due",
+            `This job can only be completed on or after ${dueDate.toLocaleDateString()}. Please wait until the due date to complete this job.`
+          );
+        } else if (
           job &&
           job.status !== "Scheduled" &&
-          job.status !== "In Progress" &&
-          job.status !== "Overdue"
+          job.status !== "In Progress"
         ) {
           Alert.alert(
             "Invalid Job Status",
-            `Only scheduled, in-progress, or overdue jobs can be completed. Current status: ${job.status}`
+            `Only scheduled or in-progress jobs can be completed. Current status: ${job.status}`
           );
         } else {
           Alert.alert(
@@ -1545,32 +1483,47 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         return;
       }
 
-      const result = await completeJobWithInspectionSubmission(jobId, {
-        clientSubmissionId,
-        template: selectedTemplate,
-        formValues,
-        mediaByField,
-        notes,
-        ...submissionMetadata,
-      });
+      let reportId = inspectionReportId;
+      let reportUrl = inspectionReportUrl;
 
-      const reportId =
-        result?.completionDetails?.inspectionReportId ||
-        result?.job?.latestInspectionReport?.id ||
-        result?.job?.latestInspectionReport?._id ||
-        null;
-      const reportUrl =
-        result?.completionDetails?.reportFile ||
-        result?.job?.latestInspectionReport?.pdf?.url ||
-        result?.job?.reportFile ||
-        undefined;
+      const completionPayload: JobCompletionData = {};
 
-      setInspectionReportId(reportId);
-      setInspectionReportUrl(reportUrl);
-      setJobCompletionCommitted(true);
-      await onSubmit({
-        inspectionReportId: reportId || undefined,
-      });
+      if (gasV3Submission) {
+        if (!reportId) {
+          const submission = await submitInspectionReport(jobId, {
+            template: selectedTemplate,
+            formValues,
+            mediaByField,
+            notes,
+          });
+          reportId = submission.report.id;
+          reportUrl = submission.pdf?.url;
+          setInspectionReportId(reportId);
+          setInspectionReportUrl(reportUrl);
+        }
+
+        if (!jobCompletionCommitted && job?.status !== "Completed") {
+          completionPayload.inspectionReportId = reportId || undefined;
+          await onSubmit(completionPayload);
+          setJobCompletionCommitted(true);
+        }
+      } else {
+        if (!reportId) {
+          const submission = await submitInspectionReport(jobId, {
+            template: selectedTemplate,
+            formValues,
+            mediaByField,
+            notes,
+          });
+          reportId = submission.report.id;
+          reportUrl = submission.pdf?.url;
+          setInspectionReportId(reportId);
+          setInspectionReportUrl(reportUrl);
+        }
+
+        completionPayload.inspectionReportId = reportId || undefined;
+        await onSubmit(completionPayload);
+      }
 
       Alert.alert(
         "Success",
@@ -1584,31 +1537,11 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     } catch (error: any) {
       console.log(error, "Error...RentalEase");
       console.error("Job completion failed", error);
-
-      if (shouldQueueInspectionSyncError(error)) {
-        await enqueuePendingInspectionSync({
-          jobId,
-          clientSubmissionId,
-          jobType,
-          template: selectedTemplate,
-          formValues,
-          mediaByField,
-          notes,
-          ...submissionMetadata,
-        });
-        suppressDraftSavesRef.current = true;
-        await clearDraft();
-        Alert.alert(
-          "Saved for sync",
-          "The inspection was saved on this device. It will sync automatically when the connection is available."
-        );
-        onClose();
-        return;
-      }
-
       Alert.alert(
         "Unable to complete job",
-        error?.message || "Please try again."
+        gasV3Submission && jobCompletionCommitted
+          ? `The job was completed, but the gas report submission failed. ${error?.message || "Please retry the report submission."}`
+          : error?.message || "Please try again."
       );
     } finally {
       setIsSubmitting(false);

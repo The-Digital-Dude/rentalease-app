@@ -1,37 +1,6 @@
 import { getToken } from "./secureStore";
 import { BASE_URL } from "../config/api";
 
-const parseApiResponseBody = async (res: Response) => {
-  const rawBody = await res.text();
-  const contentType = res.headers.get("content-type") || "";
-
-  if (!rawBody) {
-    return { json: null, rawBody, contentType };
-  }
-
-  if (contentType.toLowerCase().includes("application/json")) {
-    return {
-      json: JSON.parse(rawBody),
-      rawBody,
-      contentType,
-    };
-  }
-
-  try {
-    return {
-      json: JSON.parse(rawBody),
-      rawBody,
-      contentType,
-    };
-  } catch {
-    return {
-      json: null,
-      rawBody,
-      contentType,
-    };
-  }
-};
-
 export type Job = {
   id: string;
   job_id: string;
@@ -327,7 +296,6 @@ export type JobInspectionTemplateResponse = {
 };
 
 export type InspectionMediaUpload = {
-  clientMediaId?: string;
   uri: string;
   name: string;
   type: string;
@@ -339,16 +307,7 @@ export type InspectionSubmissionPayload = {
   formValues: Record<string, any>;
   mediaByField: Record<string, InspectionMediaUpload[]>;
   notes?: string;
-  nextComplianceDate?: string;
-  eventLocalTimestamp?: string;
-  eventTimezone?: string;
-  timestampSource?: string;
 };
-
-export type InspectionCompletionSubmissionPayload =
-  InspectionSubmissionPayload & {
-    clientSubmissionId: string;
-  };
 
 export type InspectionReportSummary = {
   id: string;
@@ -479,42 +438,21 @@ const normalizeSubmissionFormData = (
   return normalized;
 };
 
-const createFallbackClientMediaId = (
-  fieldKey: string,
-  media: InspectionMediaUpload,
-  index: number
-) => {
-  const source = media.uri || media.name || `${fieldKey}-${index}`;
-  const normalized = source.replace(/[^a-zA-Z0-9]+/g, "-").slice(-48);
-  return `${fieldKey}-${index}-${normalized}`;
-};
+export const submitInspectionReport = async (
+  jobId: string,
+  payload: InspectionSubmissionPayload
+): Promise<{
+  report: InspectionReportSummary;
+  pdf?: { url?: string };
+}> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
 
-export const normalizeInspectionMediaByField = (
-  mediaByField: Record<string, InspectionMediaUpload[]>
-): Record<string, InspectionMediaUpload[]> =>
-  Object.fromEntries(
-    Object.entries(mediaByField || {}).map(([fieldKey, items]) => [
-      fieldKey,
-      (items || []).map((media, index) => ({
-        ...media,
-        clientMediaId:
-          media.clientMediaId || createFallbackClientMediaId(fieldKey, media, index),
-      })),
-    ])
-  );
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
 
-const buildOrderedClientMediaIds = (items: InspectionMediaUpload[]) =>
-  items
-    .map((item) => item.clientMediaId)
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
-
-const appendInspectionSubmissionPayload = (
-  formData: FormData,
-  payload: InspectionSubmissionPayload,
-  options: {
-    includeClientSubmissionId?: string;
-  } = {}
-) => {
+  const formData = new FormData();
   formData.append("jobType", payload.template.jobType);
   formData.append("templateVersion", String(payload.template.version));
   const normalizedFormData = normalizeSubmissionFormData(
@@ -525,26 +463,6 @@ const appendInspectionSubmissionPayload = (
 
   if (payload.notes) {
     formData.append("notes", payload.notes);
-  }
-
-  if (payload.nextComplianceDate) {
-    formData.append("nextComplianceDate", payload.nextComplianceDate);
-  }
-
-  if (payload.eventLocalTimestamp) {
-    formData.append("eventLocalTimestamp", payload.eventLocalTimestamp);
-  }
-
-  if (payload.eventTimezone) {
-    formData.append("eventTimezone", payload.eventTimezone);
-  }
-
-  if (payload.timestampSource) {
-    formData.append("timestampSource", payload.timestampSource);
-  }
-
-  if (options.includeClientSubmissionId) {
-    formData.append("clientSubmissionId", options.includeClientSubmissionId);
   }
 
   const mediaMeta: Record<string, any> = {};
@@ -561,7 +479,6 @@ const appendInspectionSubmissionPayload = (
         metadata: {
           ...metadata,
           count: items.length,
-          clientMediaIds: buildOrderedClientMediaIds(items),
         },
       };
 
@@ -581,7 +498,7 @@ const appendInspectionSubmissionPayload = (
         ? payload.formValues[section.id]
         : [];
 
-      sectionItems.forEach((_: unknown, itemIndex: number) => {
+      sectionItems.forEach((_, itemIndex) => {
         section.fields.forEach((field) => {
           const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
           const items = payload.mediaByField[storageKey];
@@ -608,7 +525,7 @@ const appendInspectionSubmissionPayload = (
           (column) => column.type === "photo" || column.type === "photo-multi"
         );
 
-        rows.forEach((_: unknown, rowIndex: number) => {
+        rows.forEach((_, rowIndex) => {
           photoColumns.forEach((column) => {
             const nestedFieldId = `${field.id}.${column.id}`;
             const storageKey = getMediaStorageKey(
@@ -648,140 +565,6 @@ const appendInspectionSubmissionPayload = (
   if (Object.keys(mediaMeta).length) {
     formData.append("mediaMeta", JSON.stringify(mediaMeta));
   }
-};
-
-export const createInspectionSubmission = async (
-  jobId: string,
-  payload: InspectionCompletionSubmissionPayload
-): Promise<{
-  submissionId: string;
-  status: string;
-  uploadedMediaCount: number;
-  inspectionReportId?: string | null;
-}> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const res = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/inspection-submissions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      clientSubmissionId: payload.clientSubmissionId,
-      jobType: payload.template.jobType,
-      templateVersion: payload.template.version,
-      formData: payload.formValues,
-      notes: payload.notes,
-      nextComplianceDate: payload.nextComplianceDate,
-      eventLocalTimestamp: payload.eventLocalTimestamp,
-      eventTimezone: payload.eventTimezone,
-      timestampSource: payload.timestampSource,
-    }),
-  });
-
-  const { json, rawBody, contentType } = await parseApiResponseBody(res);
-  if (!res.ok) {
-    throw new Error(
-      json?.message ||
-        `Failed to create inspection submission (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-    );
-  }
-
-  return json.data;
-};
-
-export const uploadInspectionSubmissionMediaBatch = async (
-  submissionId: string,
-  payload: InspectionSubmissionPayload
-): Promise<{
-  submissionId: string;
-  uploadedBatchCount: number;
-  uploadedMediaCount: number;
-  status: string;
-}> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const formData = new FormData();
-  appendInspectionSubmissionPayload(formData, payload);
-
-  const res = await fetch(
-    `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/media-batch`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    }
-  );
-
-  const { json, rawBody, contentType } = await parseApiResponseBody(res);
-  if (!res.ok) {
-    throw new Error(
-      json?.message ||
-        `Failed to upload inspection media batch (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-    );
-  }
-
-  return json.data;
-};
-
-export const finalizeInspectionSubmission = async (submissionId: string): Promise<any> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const res = await fetch(
-    `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/finalize`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-
-  const { json, rawBody, contentType } = await parseApiResponseBody(res);
-  if (!res.ok) {
-    throw new Error(
-      json?.message ||
-        `Failed to finalize inspection submission (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-    );
-  }
-
-  return json.data || json;
-};
-
-export const submitInspectionReport = async (
-  jobId: string,
-  payload: InspectionSubmissionPayload
-): Promise<{
-  report: InspectionReportSummary;
-  pdf?: { url?: string };
-}> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const formData = new FormData();
-  appendInspectionSubmissionPayload(formData, payload);
 
   const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
   console.log("[submitInspectionReport] Request details:", {
@@ -805,53 +588,12 @@ export const submitInspectionReport = async (
     body: formData,
   });
 
-  const { json, rawBody, contentType } = await parseApiResponseBody(res);
+  const json = await res.json();
   if (!res.ok) {
-    throw new Error(
-      json?.message ||
-        `Failed to submit inspection report (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-    );
+    throw new Error(json?.message || "Failed to submit inspection report");
   }
 
   return json.data;
-};
-
-export const completeJobWithInspectionSubmission = async (
-  jobId: string,
-  payload: InspectionCompletionSubmissionPayload
-): Promise<any> => {
-  const baseUrl = BASE_URL;
-  const token = await getToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const formData = new FormData();
-  appendInspectionSubmissionPayload(formData, payload, {
-    includeClientSubmissionId: payload.clientSubmissionId,
-  });
-
-  const res = await fetch(
-    `${baseUrl}/api/v1/jobs/${jobId}/complete-with-inspection`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    }
-  );
-
-  const { json, rawBody, contentType } = await parseApiResponseBody(res);
-  if (!res.ok) {
-    throw new Error(
-      json?.message ||
-        `Failed to complete inspection job (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-    );
-  }
-
-  return json.data || json;
 };
 
 // Fetch available jobs
@@ -977,12 +719,10 @@ export async function fetchTechnicianJobs(
     });
 
     const json = await res.json();
-    console.log("[fetchTechnicianJobs] Response summary:", {
-      status: json?.status,
-      jobsCount: Array.isArray(json?.data?.jobs) ? json.data.jobs.length : 0,
-      page: json?.data?.pagination?.page || null,
-      total: json?.data?.pagination?.total || null,
-    });
+    console.log(
+      "[fetchTechnicianJobs] Response:",
+      JSON.stringify(json, null, 2)
+    );
 
     if (!res.ok) {
       // Handle specific authentication errors
@@ -1129,7 +869,7 @@ export async function completeJob(
     }
 
     const res = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/complete`, {
-      method: "POST",
+      method: "PATCH",
       headers: {
         Authorization: `Bearer ${token}`,
         // Don't set Content-Type for FormData, let the browser set it
@@ -1137,14 +877,11 @@ export async function completeJob(
       body: formData,
     });
 
-    const { json, rawBody, contentType } = await parseApiResponseBody(res);
+    const json = await res.json();
     console.log("[completeJob] Response:", JSON.stringify(json, null, 2));
 
     if (!res.ok) {
-      throw new Error(
-        json?.message ||
-          `Failed to complete job (status ${res.status}, content-type ${contentType || "unknown"}, body ${rawBody.slice(0, 120)})`
-      );
+      throw new Error(json?.message || "Failed to complete job");
     }
 
     return json.data || json;
