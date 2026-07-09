@@ -1468,11 +1468,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         } else if (
           job &&
           job.status !== "Scheduled" &&
-          job.status !== "In Progress"
+          job.status !== "In Progress" &&
+          job.status !== "Overdue"
         ) {
           Alert.alert(
             "Invalid Job Status",
-            `Only scheduled or in-progress jobs can be completed. Current status: ${job.status}`
+            `Only scheduled, in-progress, or overdue jobs can be completed. Current status: ${job.status}`
           );
         } else {
           Alert.alert(
