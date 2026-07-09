@@ -277,7 +277,7 @@ export default function ActiveJobsPage() {
         dueDate.setHours(0, 0, 0, 0);
         return (
           dueDate < today &&
-          (item.status === "Scheduled" || item.status === "In Progress")
+          (item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue")
         );
       };
 

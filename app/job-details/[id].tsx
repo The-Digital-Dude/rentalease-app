@@ -520,7 +520,7 @@ export default function JobDetailsPage() {
     dueDate.setHours(0, 0, 0, 0);
     return (
       dueDate < today &&
-      (job.status === "Scheduled" || job.status === "In Progress")
+      (job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue")
     );
   };
 
@@ -1239,7 +1239,7 @@ export default function JobDetailsPage() {
               </TouchableOpacity>
             )}
 
-            {(job.status === "Scheduled" || job.status === "In Progress") &&
+            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue") &&
               canCompleteJob() && (
                 <TouchableOpacity
                   style={[
@@ -1257,7 +1257,7 @@ export default function JobDetailsPage() {
                 </TouchableOpacity>
               )}
 
-            {(job.status === "Scheduled" || job.status === "In Progress") &&
+            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue") &&
               !canCompleteJob() && (
                 <View
                   style={[
