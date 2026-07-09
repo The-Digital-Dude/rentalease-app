@@ -894,8 +894,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const canCompleteJob = () => {
     if (!job) return true; // If no job data provided, assume it can be completed (fallback)
 
-    // Only scheduled or in progress jobs can be completed
-    if (job.status !== "Scheduled" && job.status !== "In Progress") {
+    // Only scheduled, in progress, or overdue jobs can be completed
+    if (job.status !== "Scheduled" && job.status !== "In Progress" && job.status !== "Overdue") {
       return false;
     }
 
