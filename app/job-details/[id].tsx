@@ -201,11 +201,13 @@ const CountdownTimer = ({
                 ? `${timeLeft.days} day${timeLeft.days > 1 ? "s" : ""} `
                 : ""
             }${timeLeft.hours}h ${timeLeft.minutes}m`
-          : `Due on ${new Date(dueDate).toLocaleDateString()}`}
+          : `Due on ${new Date(dueDate).toLocaleDateString("en-AU", { timeZone: AEST, day: "numeric", month: "long", year: "numeric" })}`}
       </Text>
     </View>
   );
 };
+
+const AEST = "Australia/Sydney";
 
 // Helper Functions
 const formatDate = (dateString: string) => {
@@ -214,13 +216,24 @@ const formatDate = (dateString: string) => {
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return "Invalid Date";
 
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString("en-AU", {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: AEST,
+  });
+};
+
+const formatTime = (dateString: string) => {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString("en-AU", {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
+    timeZone: AEST,
   });
 };
 
@@ -458,6 +471,10 @@ export default function JobDetailsPage() {
     }
   };
 
+  // Returns "YYYY-MM-DD" for a Date in AEST — used for calendar-day comparisons
+  const toAESTDateString = (date: Date) =>
+    date.toLocaleDateString("en-CA", { timeZone: AEST }); // en-CA gives YYYY-MM-DD
+
   // Check if job can be completed
   const canCompleteJob = () => {
     if (!job) return false;
@@ -467,13 +484,11 @@ export default function JobDetailsPage() {
       return false;
     }
 
-    // Check if job is due (due date is today or past)
-    const today = new Date();
-    const dueDate = new Date(job.dueDate);
-    today.setHours(0, 0, 0, 0);
-    dueDate.setHours(0, 0, 0, 0);
+    // Compare calendar days in AEST so Indian/other-tz devices agree
+    const todayAEST = toAESTDateString(new Date());
+    const dueDateAEST = toAESTDateString(new Date(job.dueDate));
 
-    return dueDate <= today;
+    return dueDateAEST <= todayAEST;
   };
 
   if (loading) {
@@ -512,14 +527,12 @@ export default function JobDetailsPage() {
   const statusColor = getStatusColor(job.status);
   const priorityColor = getPriorityColor(job.priority);
 
-  // Check if job is due (overdue)
+  // Check if job is due (overdue) — compare in AEST
   const isJobDue = () => {
-    const today = new Date();
-    const dueDate = new Date(job.dueDate);
-    today.setHours(0, 0, 0, 0);
-    dueDate.setHours(0, 0, 0, 0);
+    const todayAEST = toAESTDateString(new Date());
+    const dueDateAEST = toAESTDateString(new Date(job.dueDate));
     return (
-      dueDate < today &&
+      dueDateAEST < todayAEST &&
       (job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue")
     );
   };
@@ -683,6 +696,46 @@ export default function JobDetailsPage() {
                   </Text>
                 </View>
               </View>
+
+              {(job.scheduledStartTime || job.shift) && (
+                <View style={styles.infoRow}>
+                  <MaterialCommunityIcons
+                    name="clock-outline"
+                    size={20}
+                    color={theme.textSecondary}
+                  />
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>
+                      Scheduled Time (AEST)
+                    </Text>
+                    <Text style={[styles.infoValue, { color: theme.text }]}>
+                      {job.scheduledStartTime && job.scheduledEndTime
+                        ? `${formatTime(job.scheduledStartTime)} – ${formatTime(job.scheduledEndTime)}`
+                        : job.shift
+                          ? `${(job.shift as string).charAt(0).toUpperCase() + (job.shift as string).slice(1)} shift`
+                          : "Not set"}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {job.shift && (
+                <View style={styles.infoRow}>
+                  <MaterialCommunityIcons
+                    name="weather-sunset-up"
+                    size={20}
+                    color={theme.textSecondary}
+                  />
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>
+                      Shift
+                    </Text>
+                    <Text style={[styles.infoValue, { color: theme.text }]}>
+                      {(job.shift as string).charAt(0).toUpperCase() + (job.shift as string).slice(1)}
+                    </Text>
+                  </View>
+                </View>
+              )}
 
               {job.notes && (
                 <View style={styles.infoRow}>

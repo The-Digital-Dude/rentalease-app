@@ -92,6 +92,9 @@ export type Job = {
   invoice?: any;
   completedAt?: string;
   updatedAt?: string;
+  shift?: "morning" | "afternoon" | "evening";
+  scheduledStartTime?: string | null;
+  scheduledEndTime?: string | null;
 };
 
 const getFullName = (value: any): string => {

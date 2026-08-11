@@ -260,23 +260,22 @@ export default function ActiveJobsPage() {
         }
       };
 
-      // Check if job can be completed (due date is today or past)
+      const toAESTDateString = (d: Date) =>
+        d.toLocaleDateString("en-CA", { timeZone: AEST });
+
+      // Check if job can be completed (due date is today or past, in AEST)
       const canCompleteJob = () => {
-        const today = new Date();
-        const dueDate = new Date(item.dueDate);
-        today.setHours(0, 0, 0, 0);
-        dueDate.setHours(0, 0, 0, 0);
-        return dueDate <= today;
+        const todayAEST = toAESTDateString(new Date());
+        const dueDateAEST = toAESTDateString(new Date(item.dueDate));
+        return dueDateAEST <= todayAEST;
       };
 
-      // Check if job is due (overdue)
+      // Check if job is due (overdue) — compare in AEST
       const isJobDue = () => {
-        const today = new Date();
-        const dueDate = new Date(item.dueDate);
-        today.setHours(0, 0, 0, 0);
-        dueDate.setHours(0, 0, 0, 0);
+        const todayAEST = toAESTDateString(new Date());
+        const dueDateAEST = toAESTDateString(new Date(item.dueDate));
         return (
-          dueDate < today &&
+          dueDateAEST < todayAEST &&
           (item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue")
         );
       };
@@ -641,6 +640,8 @@ export default function ActiveJobsPage() {
 }
 
 // Helper Functions
+const AEST = "Australia/Sydney";
+
 const formatDate = (dateString: string) => {
   const date = new Date(dateString);
   const now = new Date();
@@ -648,16 +649,16 @@ const formatDate = (dateString: string) => {
     Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60);
 
   if (diffInHours < 24) {
-    return date.toLocaleTimeString("en-US", {
+    return date.toLocaleTimeString("en-AU", {
       hour: "2-digit",
       minute: "2-digit",
+      timeZone: AEST,
     });
   } else {
-    return date.toLocaleDateString("en-US", {
+    return date.toLocaleDateString("en-AU", {
       month: "short",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
+      timeZone: AEST,
     });
   }
 };
