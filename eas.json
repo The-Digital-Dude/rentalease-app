@@ -20,6 +20,7 @@
     },
     "preview": {
       "distribution": "internal",
+      "autoIncrement": true,
       "android": {
         "buildType": "apk"
       },
@@ -29,7 +30,7 @@
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://rentalease-cloud-server.onrender.com"
       },
-      "channel": "preview"
+      "channel": "production"
     },
     "production": {
       "distribution": "store",
