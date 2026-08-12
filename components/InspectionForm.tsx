@@ -142,7 +142,7 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
       </TouchableOpacity>
 
       {showPicker && Platform.OS === 'ios' && (
-        <View style={styles.iosPickerContainer}>
+        <View style={[styles.iosPickerContainer, { backgroundColor: theme.card || theme.surface || '#fff' }]}>
           <View style={[styles.iosPickerHeader, { borderBottomColor: theme.border }]}>
             <TouchableOpacity onPress={handleIOSCancel} style={styles.iosPickerButton}>
               <Text style={[styles.iosPickerButtonText, { color: theme.textSecondary }]}>Cancel</Text>
@@ -156,7 +156,7 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
             mode="date"
             display="spinner"
             onChange={handleDateChange}
-            style={styles.iosDatePicker}
+            style={[styles.iosDatePicker, { backgroundColor: theme.card || theme.surface || '#fff' }]}
           />
         </View>
       )}
@@ -1790,7 +1790,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   iosPickerContainer: {
-    backgroundColor: "white",
     borderRadius: 10,
     marginTop: 10,
     overflow: "hidden",
@@ -1812,7 +1811,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   iosDatePicker: {
-    backgroundColor: "white",
+    width: "100%",
+    height: 216,
   },
   repeatableSection: {
     gap: 12,

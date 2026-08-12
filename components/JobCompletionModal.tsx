@@ -494,7 +494,9 @@ const initializeFormValues = (
   template: InspectionTemplate,
   jobDetailsData?: any
 ): InspectionFormValues => {
-  const today = new Date().toISOString().split("T")[0];
+  // AEST = UTC+10 (August = Southern Hemisphere winter, no DST)
+  const aestNow = new Date(Date.now() + 10 * 60 * 60 * 1000);
+  const today = aestNow.toISOString().split("T")[0];
 
   const genericPrefill = (field: InspectionField) =>
     getGenericPrefillValue(field, today);
@@ -543,10 +545,10 @@ const initializeFormValues = (
         return `${jobDetailsData.assignedTechnician.firstName || ''} ${jobDetailsData.assignedTechnician.lastName || ''}`.trim();
       }
       if (field.id === "inspection-date") {
-        return new Date().toISOString().split("T")[0];
+        return new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().split("T")[0];
       }
       if (field.id === "next-service-due") {
-        const nextYear = new Date();
+        const nextYear = new Date(Date.now() + 10 * 60 * 60 * 1000);
         nextYear.setFullYear(nextYear.getFullYear() + 1);
         return nextYear.toISOString().split("T")[0];
       }

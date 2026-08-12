@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { ThemeProvider } from "../contexts/ThemeContext";
 import React from "react";
 import * as Notifications from "expo-notifications";
+import * as Updates from "expo-updates";
 import { useRouter } from "expo-router";
 
 Notifications.setNotificationHandler({
@@ -33,7 +34,21 @@ function NotificationResponseListener() {
   return null;
 }
 
+async function checkForUpdates() {
+  try {
+    const update = await Updates.checkForUpdateAsync();
+    if (update.isAvailable) {
+      await Updates.fetchUpdateAsync();
+      await Updates.reloadAsync();
+    }
+  } catch (_) {}
+}
+
 export default function RootLayout() {
+  React.useEffect(() => {
+    checkForUpdates();
+  }, []);
+
   return (
     <ThemeProvider>
       <NotificationResponseListener />
