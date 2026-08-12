@@ -242,6 +242,8 @@ const getStatusColor = (status: string) => {
     Pending: { bg: "#FEF3C7", text: "#F59E0B" },
     Scheduled: { bg: "#DBEAFE", text: "#3B82F6" },
     "In Progress": { bg: "#D1FAE5", text: "#10B981" },
+    Due: { bg: "#FEF3C7", text: "#D97706" },
+    Overdue: { bg: "#FEE2E2", text: "#DC2626" },
     Completed: { bg: "#F3F4F6", text: "#6B7280" },
   };
   return colors[status] || { bg: "#F3F4F6", text: "#6B7280" };
@@ -479,8 +481,8 @@ export default function JobDetailsPage() {
   const canCompleteJob = () => {
     if (!job) return false;
 
-    // Only scheduled, in progress, or overdue jobs can be completed
-    if (job.status !== "Scheduled" && job.status !== "In Progress" && job.status !== "Overdue") {
+    // Scheduled, In Progress, Due, or Overdue jobs can be completed
+    if (job.status !== "Scheduled" && job.status !== "In Progress" && job.status !== "Due" && job.status !== "Overdue") {
       return false;
     }
 
@@ -533,7 +535,7 @@ export default function JobDetailsPage() {
     const dueDateAEST = toAESTDateString(new Date(job.dueDate));
     return (
       dueDateAEST < todayAEST &&
-      (job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue")
+      (job.status === "Scheduled" || job.status === "In Progress" || job.status === "Due" || job.status === "Overdue")
     );
   };
 
@@ -1292,7 +1294,7 @@ export default function JobDetailsPage() {
               </TouchableOpacity>
             )}
 
-            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue") &&
+            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Due" || job.status === "Overdue") &&
               canCompleteJob() && (
                 <TouchableOpacity
                   style={[
@@ -1310,7 +1312,7 @@ export default function JobDetailsPage() {
                 </TouchableOpacity>
               )}
 
-            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Overdue") &&
+            {(job.status === "Scheduled" || job.status === "In Progress" || job.status === "Due" || job.status === "Overdue") &&
               !canCompleteJob() && (
                 <View
                   style={[

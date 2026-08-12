@@ -172,9 +172,10 @@ export default function ActiveJobsPage() {
         bgColor: "#D1FAE5",
         icon: "play-circle",
       },
+      Due: { color: "#D97706", bgColor: "#FEF3C7", icon: "clock-alert" },
       Completed: { color: "#10B981", bgColor: isDark ? "#064E3B" : "#D1FAE5", icon: "check-circle" },
       Cancelled: { color: "#EF4444", bgColor: "#FEE2E2", icon: "close-circle" },
-      Overdue: { color: "#EF4444", bgColor: "#FEE2E2", icon: "alert-circle" },
+      Overdue: { color: "#DC2626", bgColor: "#FEE2E2", icon: "alert-circle" },
     };
     return (
       statusConfig[status] || {
@@ -276,7 +277,7 @@ export default function ActiveJobsPage() {
         const dueDateAEST = toAESTDateString(new Date(item.dueDate));
         return (
           dueDateAEST < todayAEST &&
-          (item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue")
+          (item.status === "Scheduled" || item.status === "In Progress" || item.status === "Due" || item.status === "Overdue")
         );
       };
 
@@ -443,7 +444,7 @@ export default function ActiveJobsPage() {
           )}
 
           <View style={styles.jobActions}>
-            {(item.status === "Scheduled" || item.status === "In Progress" || item.status === "Overdue") &&
+            {(item.status === "Scheduled" || item.status === "In Progress" || item.status === "Due" || item.status === "Overdue") &&
               canCompleteJob() && (
                 <TouchableOpacity
                   style={[
@@ -535,6 +536,7 @@ export default function ActiveJobsPage() {
     { id: "Active", label: "Active" },
     { id: "Scheduled", label: "Scheduled" },
     { id: "In Progress", label: "In Progress" },
+    { id: "Due", label: "Due" },
     { id: "Overdue", label: "Overdue" },
     { id: "Completed", label: "Completed" },
   ];
