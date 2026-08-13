@@ -265,7 +265,9 @@ export default function ActiveJobsPage() {
         d.toLocaleDateString("en-CA", { timeZone: AEST });
 
       // Check if job can be completed (due date is today or past, in AEST)
+      // Due/Overdue status means the system already validated the date — allow immediately
       const canCompleteJob = () => {
+        if (item.status === "Due" || item.status === "Overdue") return true;
         const todayAEST = toAESTDateString(new Date());
         const dueDateAEST = toAESTDateString(new Date(item.dueDate));
         return dueDateAEST <= todayAEST;
