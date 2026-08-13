@@ -156,6 +156,7 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
             mode="date"
             display="spinner"
             onChange={handleDateChange}
+            textColor={theme.text || '#000000'}
             style={[styles.iosDatePicker, { backgroundColor: theme.card || theme.surface || '#fff' }]}
           />
         </View>

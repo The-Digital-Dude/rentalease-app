@@ -505,6 +505,17 @@ const initializeFormValues = (
     field: InspectionField,
     sectionId: string
   ): any => {
+    // Date fields must always use client-computed AEST date, never trust server's UTC defaultValue
+    if (
+      field.id === "inspection-date" ||
+      field.id === "report-date" ||
+      field.id === "completion-date" ||
+      field.id === "signed-date" ||
+      field.id === "sign-off-date"
+    ) {
+      return today;
+    }
+
     const explicitDefault = (field as any).defaultValue;
     if (hasMeaningfulDefault(explicitDefault)) {
       return explicitDefault;
