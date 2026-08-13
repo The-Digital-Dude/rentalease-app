@@ -135,7 +135,7 @@ export default function MorePage() {
     {
       title: "About",
       icon: "information-outline",
-      onPress: () => Alert.alert("About", "About RentalEase Technician v1.0.0"),
+      onPress: () => router.push("/(app)/about"),
     },
   ];
 

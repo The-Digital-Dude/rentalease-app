@@ -173,6 +173,12 @@ export default function AppLayout() {
           href: null, // Hide from tab bar
         }}
       />
+      <Tabs.Screen
+        name="about"
+        options={{
+          href: null, // Hide from tab bar
+        }}
+      />
     </Tabs>
   );
 }
