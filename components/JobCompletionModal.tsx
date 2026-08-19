@@ -576,7 +576,8 @@ const initializeFormValues = (
         (field.id === "inspector-name" || field.id === "inspectorName" || field.id === "technician-full-name") &&
         jobDetailsData.assignedTechnician
       ) {
-        return `${jobDetailsData.assignedTechnician.firstName || ''} ${jobDetailsData.assignedTechnician.lastName || ''}`.trim();
+        const t = jobDetailsData.assignedTechnician;
+        return (t.fullName || `${t.firstName || ''} ${t.lastName || ''}`.trim()).trim();
       }
       if (HIDDEN_AUTO_FILL_FIELD_IDS.has(field.id) && jobDetailsData.assignedTechnician?.licenseNumber) {
         return jobDetailsData.assignedTechnician.licenseNumber;
@@ -672,7 +673,8 @@ const initializeFormValues = (
           case "inspectorName":
             // Use real technician name if available
             if (jobDetailsData?.assignedTechnician) {
-              return `${jobDetailsData.assignedTechnician.firstName || ''} ${jobDetailsData.assignedTechnician.lastName || ''}`.trim();
+              const t = jobDetailsData.assignedTechnician;
+              return (t.fullName || `${t.firstName || ''} ${t.lastName || ''}`.trim()).trim();
             }
             // In development, use test data; in production, leave empty
             return __DEV__ ? "John Smith" : "";
