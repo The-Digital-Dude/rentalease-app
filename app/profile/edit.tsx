@@ -72,6 +72,8 @@ export default function EditProfilePage() {
   const [suburb, setSuburb] = useState("");
   const [state, setState] = useState("");
   const [postcode, setPostcode] = useState("");
+  const [licenseNumber, setLicenseNumber] = useState("");
+  const [licenseExpiry, setLicenseExpiry] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -90,6 +92,8 @@ export default function EditProfilePage() {
         setSuburb(data.address?.suburb || "");
         setState(data.address?.state || "");
         setPostcode(data.address?.postcode || "");
+        setLicenseNumber(data.licenseNumber || "");
+        setLicenseExpiry(data.licenseExpiry ? String(data.licenseExpiry).split("T")[0] : "");
       } catch (e: any) {
         const message = e?.message || "Failed to load profile";
         if (message.includes("Authentication expired")) {
@@ -177,6 +181,8 @@ export default function EditProfilePage() {
           postcode: postcode.trim(),
           fullAddress: buildFullAddress({ street, suburb, state, postcode }),
         },
+        licenseNumber: licenseNumber.trim() || undefined,
+        licenseExpiry: licenseExpiry || undefined,
       };
 
       const updated = await updateProfile(next);
@@ -335,6 +341,22 @@ export default function EditProfilePage() {
                 />
               </View>
             </View>
+          </View>
+
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Credentials</Text>
+            <InputField
+              placeholder="License Number"
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+              style={spacedInputStyle}
+            />
+            <InputField
+              placeholder="License Expiry (YYYY-MM-DD)"
+              value={licenseExpiry}
+              onChangeText={setLicenseExpiry}
+              style={spacedInputStyle}
+            />
           </View>
 
           <PrimaryButton
