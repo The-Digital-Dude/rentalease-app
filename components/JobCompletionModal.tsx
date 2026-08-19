@@ -572,8 +572,14 @@ const initializeFormValues = (
       if (field.id === "job-reference" && jobDetailsData.jobReference) {
         return jobDetailsData.jobReference;
       }
-      if (field.id === "inspector-name" && jobDetailsData.assignedTechnician) {
+      if (
+        (field.id === "inspector-name" || field.id === "inspectorName" || field.id === "technician-full-name") &&
+        jobDetailsData.assignedTechnician
+      ) {
         return `${jobDetailsData.assignedTechnician.firstName || ''} ${jobDetailsData.assignedTechnician.lastName || ''}`.trim();
+      }
+      if (HIDDEN_AUTO_FILL_FIELD_IDS.has(field.id) && jobDetailsData.assignedTechnician?.licenseNumber) {
+        return jobDetailsData.assignedTechnician.licenseNumber;
       }
       if (field.id === "inspection-date") {
         return new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().split("T")[0];
