@@ -117,6 +117,26 @@ const defaultLineItem = (): InvoiceLineItem => ({
 
 const DRAFT_VERSION = 1;
 const DRAFT_SAVE_DELAY_MS = 600;
+
+// Fields that are auto-filled from the technician record and hidden from the UI.
+// They must be excluded from required-field validation so a missing license
+// never blocks job completion.
+const HIDDEN_AUTO_FILL_FIELD_IDS = new Set([
+  "license-number",
+  "licenseNumber",
+  "licence-number",
+  "licenceNumber",
+  "licence-registration-number",
+  "license-registration-number",
+  "registration-number",
+  "inspector-details-license",
+  "inspector-license",
+  "gasfitter-license",
+  "electrical-license",
+  "certification-licence-number",
+  "technician-license",
+  "tech-license",
+]);
 const DRAFT_KEY_PREFIX = "inspectionDraft:v1:";
 const DRAFT_MEDIA_DIR = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}inspection-drafts`
@@ -652,6 +672,15 @@ const initializeFormValues = (
             return __DEV__ ? "John Smith" : "";
           case "license-number":
           case "licenseNumber":
+          case "licence-number":
+          case "licenceNumber":
+          case "licence-registration-number":
+          case "license-registration-number":
+          case "inspector-license":
+          case "gasfitter-license":
+          case "electrical-license":
+          case "inspector-details-license":
+          case "certification-licence-number":
             if (jobDetailsData?.assignedTechnician?.licenseNumber) {
               return jobDetailsData.assignedTechnician.licenseNumber;
             }
@@ -2346,6 +2375,9 @@ const validateRequiredFields = (
       return;
     }
     if (!isFieldVisible(field, scopeValues)) {
+      return;
+    }
+    if (HIDDEN_AUTO_FILL_FIELD_IDS.has(field.id)) {
       return;
     }
 
