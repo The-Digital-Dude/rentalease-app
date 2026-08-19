@@ -25,6 +25,23 @@ import { getMediaStorageKey } from "../services/jobs";
 
 export type InspectionFormValues = Record<string, any>;
 
+const HIDDEN_AUTO_FILL_FIELDS = new Set([
+  "license-number",
+  "licenseNumber",
+  "licence-number",
+  "licenceNumber",
+  "licence-registration-number",
+  "license-registration-number",
+  "registration-number",
+  "inspector-details-license",
+  "inspector-license",
+  "gasfitter-license",
+  "electrical-license",
+  "certification-licence-number",
+  "technician-license",
+  "tech-license",
+]);
+
 const resolveFieldLabel = (field: InspectionField): string => {
   const fromQuestion = field.question?.trim();
   if (fromQuestion) {
@@ -796,6 +813,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       return null;
     }
 
+    if (HIDDEN_AUTO_FILL_FIELDS.has(field.id)) {
+      return null;
+    }
+
     if (readOnly && field.type !== "signature") {
       return (
         <View style={[styles.readOnlyContainer, { borderColor: theme.border }]}>
@@ -1364,6 +1385,10 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
         const renderFieldBlock = (field: InspectionField, itemIndex?: number) => {
           const scopeValues = getScopedValues(section.id, itemIndex);
           if (!isFieldVisible(field, scopeValues)) {
+            return null;
+          }
+
+          if (HIDDEN_AUTO_FILL_FIELDS.has(field.id)) {
             return null;
           }
 
