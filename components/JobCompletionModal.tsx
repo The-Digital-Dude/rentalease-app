@@ -910,12 +910,16 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const canCompleteJob = () => {
     if (!job) return true; // If no job data provided, assume it can be completed (fallback)
 
-    // Only scheduled, in progress, or overdue jobs can be completed
-    if (job.status !== "Scheduled" && job.status !== "In Progress" && job.status !== "Overdue") {
+    // Due and Overdue jobs can always be completed regardless of date
+    if (job.status === "Due" || job.status === "Overdue") {
+      return true;
+    }
+
+    // Scheduled and In Progress jobs can be completed on or after the due date
+    if (job.status !== "Scheduled" && job.status !== "In Progress") {
       return false;
     }
 
-    // Check if job is due (due date is today or past)
     const today = new Date();
     const dueDate = new Date(job.dueDate);
     today.setHours(0, 0, 0, 0);
@@ -1485,11 +1489,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           job &&
           job.status !== "Scheduled" &&
           job.status !== "In Progress" &&
-          job.status !== "Overdue"
+          job.status !== "Overdue" &&
+          job.status !== "Due"
         ) {
           Alert.alert(
             "Invalid Job Status",
-            `Only scheduled, in-progress, or overdue jobs can be completed. Current status: ${job.status}`
+            `Only scheduled, in-progress, due, or overdue jobs can be completed. Current status: ${job.status}`
           );
         } else {
           Alert.alert(
