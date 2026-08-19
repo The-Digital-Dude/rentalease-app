@@ -723,6 +723,84 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
               onChangeText={(text) => handleRowChange(rowIndex, column.id, text)}
             />
           );
+        case "yes-no":
+        case "yes-no-na": {
+          const yesNoOptions = [
+            { value: "yes", label: "Yes" },
+            { value: "no", label: "No" },
+            ...(column.type === "yes-no-na" ? [{ value: "na", label: "N/A" }] : []),
+          ];
+          return (
+            <View style={styles.tableSelectRow}>
+              {yesNoOptions.map((option) => {
+                const isSelected = value === option.value;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.optionChip,
+                      styles.tableOptionChip,
+                      {
+                        borderColor: isSelected ? theme.primary : theme.border,
+                        backgroundColor: isSelected ? theme.primary : theme.card,
+                      },
+                    ]}
+                    onPress={() =>
+                      editable && handleRowChange(rowIndex, column.id, option.value)
+                    }
+                    disabled={!editable}
+                  >
+                    <Text style={{ color: isSelected ? "#fff" : theme.text, fontWeight: isSelected ? "600" : "500" }}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          );
+        }
+        case "pass-fail":
+        case "pass-fail-na": {
+          const passFailOptions = [
+            { value: "pass", label: "Pass" },
+            { value: "fail", label: "Fail" },
+            ...(column.type === "pass-fail-na" ? [{ value: "na", label: "N/A" }] : []),
+          ];
+          return (
+            <View style={styles.tableSelectRow}>
+              {passFailOptions.map((option) => {
+                const isSelected = value === option.value;
+                const isPass = option.value === "pass";
+                const isFail = option.value === "fail";
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.optionChip,
+                      styles.tableOptionChip,
+                      {
+                        borderColor: isSelected
+                          ? isPass ? "#10B981" : isFail ? "#EF4444" : theme.primary
+                          : theme.border,
+                        backgroundColor: isSelected
+                          ? isPass ? "#10B981" : isFail ? "#EF4444" : theme.primary
+                          : theme.card,
+                      },
+                    ]}
+                    onPress={() =>
+                      editable && handleRowChange(rowIndex, column.id, option.value)
+                    }
+                    disabled={!editable}
+                  >
+                    <Text style={{ color: isSelected ? "#fff" : theme.text, fontWeight: isSelected ? "600" : "500" }}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          );
+        }
         case "text":
         default:
           return (
