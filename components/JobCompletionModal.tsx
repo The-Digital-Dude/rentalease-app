@@ -652,6 +652,9 @@ const initializeFormValues = (
             return __DEV__ ? "John Smith" : "";
           case "license-number":
           case "licenseNumber":
+            if (jobDetailsData?.assignedTechnician?.licenseNumber) {
+              return jobDetailsData.assignedTechnician.licenseNumber;
+            }
             return __DEV__ ? "LIC123456789" : "";
           case "vba-record-number":
           case "vbaRecordNumber":
