@@ -343,22 +343,6 @@ export default function EditProfilePage() {
             </View>
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Credentials</Text>
-            <InputField
-              placeholder="License Number"
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
-              style={spacedInputStyle}
-            />
-            <InputField
-              placeholder="License Expiry (YYYY-MM-DD)"
-              value={licenseExpiry}
-              onChangeText={setLicenseExpiry}
-              style={spacedInputStyle}
-            />
-          </View>
-
           <PrimaryButton
             title={saving ? "Saving..." : "Save Changes"}
             onPress={onSave}
