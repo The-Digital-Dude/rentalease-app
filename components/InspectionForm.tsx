@@ -892,7 +892,13 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
     }
 
     if (HIDDEN_AUTO_FILL_FIELDS.has(field.id)) {
-      return null;
+      return (
+        <View style={[styles.readOnlyContainer, { borderColor: theme.border }]}>
+          <Text style={[styles.readOnlyText, { color: theme.textSecondary }]}>
+            {fieldValue || "Not set — add your licence number in your profile"}
+          </Text>
+        </View>
+      );
     }
 
     if (readOnly && field.type !== "signature") {
@@ -1466,16 +1472,14 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
             return null;
           }
 
-          if (HIDDEN_AUTO_FILL_FIELDS.has(field.id)) {
-            return null;
-          }
+          const isAutoFillOnly = HIDDEN_AUTO_FILL_FIELDS.has(field.id);
 
           return (
             <View key={`${field.id}-${itemIndex ?? "base"}`} style={styles.fieldBlock}>
               <View style={styles.fieldLabelRow}>
                 <Text style={[styles.fieldLabel, { color: theme.text }]}>
                   {resolveFieldLabel(field)}
-                  {field.required ? " *" : ""}
+                  {isAutoFillOnly ? " (from your profile)" : field.required ? " *" : ""}
                 </Text>
               </View>
               {field.helpText ? (
