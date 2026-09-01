@@ -1483,6 +1483,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    // Re-entrancy guard. The button is disabled while submitting, but this is
+    // also reached from the confirmation flow above, and a duplicate call would
+    // start a second upload of the same photos.
+    if (isSubmitting) {
+      return;
+    }
     if (!selectedTemplate) {
       Alert.alert("Template missing", "Select a template before submitting.");
       return;

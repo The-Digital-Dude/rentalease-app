@@ -97,6 +97,11 @@ export type Job = {
   scheduledEndTime?: string | null;
 };
 
+// Large inspection reports (80+ photos) can take several minutes end to end.
+// Kept well above the server's own 15-minute request timeout margin so the
+// server, not the client, decides when a submission has genuinely failed.
+const INSPECTION_SUBMIT_TIMEOUT_MS = 10 * 60 * 1000;
+
 const getFullName = (value: any): string => {
   if (!value) return "";
 
@@ -583,16 +588,46 @@ export const submitInspectionReport = async (
     throw new Error(`Invalid job ID format: ${jobId}. Expected 24-character MongoDB ObjectId.`);
   }
 
-  const res = await fetch(`${baseUrl}/api/v1/inspections/jobs/${jobId}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: formData,
-  });
+  // Reports with many photos can take several minutes to upload and render on
+  // the server. The platform default socket timeout (60s on iOS) is well below
+  // that, so it must be overridden explicitly — otherwise a submission that is
+  // still progressing normally looks like a failure and gets retried, which
+  // used to start a second upload on top of the first.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    INSPECTION_SUBMIT_TIMEOUT_MS
+  );
+
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/api/v1/inspections/jobs/${jobId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(
+        "The report is taking longer than expected to upload. Check your connection and try again — if photos were already uploaded they will not be duplicated."
+      );
+    }
+    throw new Error(e?.message || "Network request failed");
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const json = await res.json();
   if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(
+        json?.message ||
+          "This report is already being submitted. Please wait for it to finish."
+      );
+    }
     throw new Error(json?.message || "Failed to submit inspection report");
   }
 
