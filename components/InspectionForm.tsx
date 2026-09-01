@@ -194,6 +194,90 @@ const DatePickerField: React.FC<DatePickerFieldProps> = ({
 const IMAGE_PICKER_MEDIA_TYPES: ImagePicker.MediaType[] = ["images"];
 const HEIC_IMAGE_EXTENSIONS = new Set(["heic", "heif"]);
 
+// Photos are downscaled on the device before upload. iPhones return ~1-4 MB
+// full-resolution HEIC per photo, so a 150-photo inspection was uploading
+// ~195 MB and forcing the server to decode every HEIC. The report PDF
+// downsamples everything to 1200px anyway, so the extra resolution was never
+// used. 1600px keeps detail for zooming while cutting a typical photo to
+// ~300 KB, and converting to JPEG removes HEIC decoding from the server
+// entirely.
+const MAX_UPLOAD_IMAGE_DIMENSION = 1600;
+const UPLOAD_IMAGE_QUALITY = 0.7;
+
+// expo-image-manipulator is a native module, and this project builds OTA
+// updates with runtimeVersion policy "appVersion" — so a JS-only update ships
+// to binaries that may not contain it. A static import would crash those apps
+// on launch. Loading it lazily means older builds simply upload uncompressed
+// (exactly today's behaviour) and compression switches on by itself once a
+// native build containing the module is released.
+let imageManipulator: typeof import("expo-image-manipulator") | null | undefined;
+
+const getImageManipulator = () => {
+  if (imageManipulator === undefined) {
+    try {
+      imageManipulator = require("expo-image-manipulator");
+    } catch {
+      imageManipulator = null;
+      console.warn(
+        "[InspectionForm] expo-image-manipulator unavailable; uploading photos uncompressed"
+      );
+    }
+  }
+  return imageManipulator;
+};
+
+/**
+ * Resizes and re-encodes a picked image to JPEG for upload.
+ *
+ * Falls back to the original asset if manipulation is unavailable or fails — a
+ * slower upload is far better than blocking a technician from attaching
+ * evidence.
+ */
+const compressPickedImage = async (
+  asset: ImagePicker.ImagePickerAsset
+): Promise<ImagePicker.ImagePickerAsset> => {
+  const manipulator = getImageManipulator();
+  if (!manipulator) {
+    return asset;
+  }
+
+  try {
+    const longestEdge = Math.max(asset.width || 0, asset.height || 0);
+
+    // Only resize when the image actually exceeds the target; still re-encode
+    // so HEIC becomes JPEG regardless of dimensions.
+    const actions =
+      longestEdge > MAX_UPLOAD_IMAGE_DIMENSION
+        ? [
+            (asset.width || 0) >= (asset.height || 0)
+              ? { resize: { width: MAX_UPLOAD_IMAGE_DIMENSION } }
+              : { resize: { height: MAX_UPLOAD_IMAGE_DIMENSION } },
+          ]
+        : [];
+
+    const result = await manipulator.manipulateAsync(asset.uri, actions, {
+      compress: UPLOAD_IMAGE_QUALITY,
+      format: manipulator.SaveFormat.JPEG,
+    });
+
+    return {
+      ...asset,
+      uri: result.uri,
+      width: result.width,
+      height: result.height,
+      mimeType: "image/jpeg",
+      fileName: (asset.fileName || "photo").replace(/\.[^.]+$/, "") + ".jpg",
+      fileSize: undefined,
+    };
+  } catch (error) {
+    console.warn("[InspectionForm] Image compression failed, using original", {
+      uri: asset.uri,
+      error: (error as any)?.message,
+    });
+    return asset;
+  }
+};
+
 const getExtensionFromValue = (value?: string | null) => {
   if (!value) {
     return null;
@@ -427,7 +511,7 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       console.log("[InspectionForm] Camera result:", result);
 
       if (!result.canceled && result.assets?.length) {
-        const asset = result.assets[0];
+        const asset = await compressPickedImage(result.assets[0]);
         const media = createInspectionMediaUpload(asset, field);
         console.log("[InspectionForm] Adding media:", media);
         onAddMedia(sectionId, field.id, media, itemIndex);
@@ -471,11 +555,14 @@ const InspectionForm: React.FC<InspectionFormProps> = ({
       console.log("[InspectionForm] Photo library result:", result);
 
       if (!result.canceled && result.assets?.length) {
-        result.assets.forEach((asset, index) => {
+        // Sequential rather than parallel: resizing several full-resolution
+        // photos at once spikes memory on older devices.
+        for (const [index, picked] of result.assets.entries()) {
+          const asset = await compressPickedImage(picked);
           const media = createInspectionMediaUpload(asset, field, index);
           console.log("[InspectionForm] Adding media:", media);
           onAddMedia(sectionId, field.id, media, itemIndex);
-        });
+        }
       }
     } catch (error) {
       console.error("[InspectionForm] Photo library error:", error);
