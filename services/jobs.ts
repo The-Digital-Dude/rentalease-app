@@ -446,6 +446,137 @@ const normalizeSubmissionFormData = (
   return normalized;
 };
 
+type CollectedMediaEntry = {
+  uploadFieldId: string;
+  file: { uri: string; name: string; type: string };
+  clientMediaId: string;
+  sizeBytes: number;
+};
+
+type CollectedMedia = {
+  /** Per-upload-field label and metadata, keyed by uploadFieldId. */
+  fieldMeta: Record<string, { label: string; metadata: Record<string, any> }>;
+  entries: CollectedMediaEntry[];
+};
+
+/**
+ * Walks the template and returns every photo to upload as a flat list, along
+ * with the per-field metadata the server needs. Kept separate from request
+ * building so the same traversal can produce either one request (legacy) or a
+ * sequence of batches (resumable flow).
+ *
+ * Each entry carries a deterministic `clientMediaId` derived from the field and
+ * the file's own uri/name. The server dedupes on this, so a resumed submission
+ * re-sends the same ids and already-uploaded photos are skipped rather than
+ * duplicated.
+ */
+const collectInspectionMedia = (
+  payload: InspectionSubmissionPayload
+): CollectedMedia => {
+  const fieldMeta: CollectedMedia["fieldMeta"] = {};
+  const entries: CollectedMediaEntry[] = [];
+
+  const appendMedia = (
+    uploadFieldId: string,
+    field: InspectionField,
+    items: InspectionMediaUpload[],
+    metadata: Record<string, any>
+  ) => {
+    const fieldLabel = field.question || field.label || field.id;
+    fieldMeta[uploadFieldId] = {
+      label: fieldLabel,
+      metadata: { ...metadata, count: items.length },
+    };
+
+    items.forEach((item, index) => {
+      const name =
+        item.name ||
+        `${uploadFieldId}-${index + 1}.${item.type?.split("/").pop()}`;
+
+      entries.push({
+        uploadFieldId,
+        file: { uri: item.uri, name, type: item.type || "image/jpeg" },
+        clientMediaId: `${uploadFieldId}::${item.uri}::${name}`,
+        sizeBytes: item.size || 0,
+      });
+    });
+  };
+
+  payload.template.sections.forEach((section) => {
+    if (section.repeatable) {
+      const sectionItems = Array.isArray(payload.formValues[section.id])
+        ? payload.formValues[section.id]
+        : [];
+
+      sectionItems.forEach((_: any, itemIndex: number) => {
+        section.fields.forEach((field) => {
+          const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
+          const items = payload.mediaByField[storageKey];
+          if (!items?.length) {
+            return;
+          }
+
+          appendMedia(`${field.id}-${itemIndex}`, field, items, {
+            sectionId: section.id,
+            fieldId: field.id,
+            itemIndex,
+          });
+        });
+      });
+      return;
+    }
+
+    section.fields.forEach((field) => {
+      if (field.type === "table") {
+        const rows = Array.isArray(payload.formValues[section.id]?.[field.id])
+          ? payload.formValues[section.id][field.id]
+          : [];
+        const photoColumns = (field.columns || []).filter(
+          (column) => column.type === "photo" || column.type === "photo-multi"
+        );
+
+        rows.forEach((_: any, rowIndex: number) => {
+          photoColumns.forEach((column) => {
+            const nestedFieldId = `${field.id}.${column.id}`;
+            const storageKey = getMediaStorageKey(
+              section.id,
+              nestedFieldId,
+              rowIndex
+            );
+            const items = payload.mediaByField[storageKey];
+            if (!items?.length) {
+              return;
+            }
+
+            appendMedia(
+              `${field.id}-${column.id}-${rowIndex}`,
+              { ...column, type: column.type } as InspectionField,
+              items,
+              {
+                sectionId: section.id,
+                fieldId: column.id,
+                parentFieldId: field.id,
+                itemIndex: rowIndex,
+              }
+            );
+          });
+        });
+      }
+
+      const storageKey = getMediaStorageKey(section.id, field.id);
+      const items = payload.mediaByField[storageKey];
+      if (items && items.length) {
+        appendMedia(field.id, field, items, {
+          sectionId: section.id,
+          fieldId: field.id,
+        });
+      }
+    });
+  });
+
+  return { fieldMeta, entries };
+};
+
 export const submitInspectionReport = async (
   jobId: string,
   payload: InspectionSubmissionPayload
@@ -473,101 +604,21 @@ export const submitInspectionReport = async (
     formData.append("notes", payload.notes);
   }
 
+  const { fieldMeta, entries } = collectInspectionMedia(payload);
   const mediaMeta: Record<string, any> = {};
-  payload.template.sections.forEach((section) => {
-    const appendMedia = (
-      uploadFieldId: string,
-      field: InspectionField,
-      items: InspectionMediaUpload[],
-      metadata: Record<string, any>
-    ) => {
-      const fieldLabel = field.question || field.label || field.id;
-      mediaMeta[uploadFieldId] = {
-        label: fieldLabel,
-        metadata: {
-          ...metadata,
-          count: items.length,
-        },
+
+  entries.forEach((entry) => {
+    if (!mediaMeta[entry.uploadFieldId]) {
+      const base = fieldMeta[entry.uploadFieldId];
+      mediaMeta[entry.uploadFieldId] = {
+        label: base.label,
+        metadata: { ...base.metadata, clientMediaIds: [] },
       };
-
-      items.forEach((item, index) => {
-        formData.append(`media__${uploadFieldId}`, {
-          uri: item.uri,
-          name:
-            item.name ||
-            `${uploadFieldId}-${index + 1}.${item.type?.split("/").pop()}`,
-          type: item.type || "image/jpeg",
-        } as any);
-      });
-    };
-
-    if (section.repeatable) {
-      const sectionItems = Array.isArray(payload.formValues[section.id])
-        ? payload.formValues[section.id]
-        : [];
-
-      sectionItems.forEach((_, itemIndex) => {
-        section.fields.forEach((field) => {
-          const storageKey = getMediaStorageKey(section.id, field.id, itemIndex);
-          const items = payload.mediaByField[storageKey];
-          if (!items?.length) {
-            return;
-          }
-
-          appendMedia(`${field.id}-${itemIndex}`, field, items, {
-            sectionId: section.id,
-            fieldId: field.id,
-            itemIndex,
-          });
-        });
-      });
-      return;
     }
-
-    section.fields.forEach((field) => {
-      if (field.type === "table") {
-        const rows = Array.isArray(payload.formValues[section.id]?.[field.id])
-          ? payload.formValues[section.id][field.id]
-          : [];
-        const photoColumns = (field.columns || []).filter(
-          (column) => column.type === "photo" || column.type === "photo-multi"
-        );
-
-        rows.forEach((_, rowIndex) => {
-          photoColumns.forEach((column) => {
-            const nestedFieldId = `${field.id}.${column.id}`;
-            const storageKey = getMediaStorageKey(
-              section.id,
-              nestedFieldId,
-              rowIndex
-            );
-            const items = payload.mediaByField[storageKey];
-            if (!items?.length) {
-              return;
-            }
-
-            appendMedia(`${field.id}-${column.id}-${rowIndex}`, {
-              ...column,
-              type: column.type,
-            } as InspectionField, items, {
-              sectionId: section.id,
-              fieldId: column.id,
-              parentFieldId: field.id,
-              itemIndex: rowIndex,
-            });
-          });
-        });
-      }
-
-      const storageKey = getMediaStorageKey(section.id, field.id);
-      const items = payload.mediaByField[storageKey];
-      if (items && items.length) {
-        appendMedia(field.id, field, items, {
-          sectionId: section.id,
-          fieldId: field.id,
-        });
-      }
-    });
+    mediaMeta[entry.uploadFieldId].metadata.clientMediaIds.push(
+      entry.clientMediaId
+    );
+    formData.append(`media__${entry.uploadFieldId}`, entry.file as any);
   });
 
   if (Object.keys(mediaMeta).length) {
@@ -632,6 +683,199 @@ export const submitInspectionReport = async (
   }
 
   return json.data;
+};
+
+/** Photos per media batch. Small enough that one request stays well inside the
+ *  server's per-request memory budget, large enough to avoid excessive
+ *  round-trips on a 100-photo report. */
+const MEDIA_BATCH_MAX_FILES = 8;
+/** Byte ceiling per batch, applied alongside the file count. HEIC photos run
+ *  1–4 MB each, so the count alone is not a reliable proxy for request size. */
+const MEDIA_BATCH_MAX_BYTES = 12 * 1024 * 1024;
+/** Per-request timeout for the staged calls. Each one is bounded work now, so
+ *  these can be far shorter than the old single-shot 10 minutes. */
+const SUBMISSION_STEP_TIMEOUT_MS = 3 * 60 * 1000;
+const FINALIZE_TIMEOUT_MS = 8 * 60 * 1000;
+
+export type InspectionSubmitProgress = {
+  phase: "creating" | "uploading" | "finalizing";
+  uploadedMedia: number;
+  totalMedia: number;
+};
+
+const requestWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  description: string
+): Promise<any> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: controller.signal });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(
+        `${description} timed out. Check your connection and try again — work already uploaded will not be repeated.`
+      );
+    }
+    throw new Error(e?.message || "Network request failed");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.message || `${description} failed`);
+  }
+  return json;
+};
+
+/**
+ * Submits an inspection report and completes the job using the server's staged
+ * submission flow: create a submission, upload photos in batches, then finalize.
+ *
+ * This replaces the previous approach of one large upload followed by a separate
+ * completion call. That had two failure modes this design removes:
+ *
+ *  - The single request carried every photo at once (100 MB+ for a large
+ *    Minimum Safety Standard job), which timed out and exhausted server memory.
+ *    Batches keep each request small and let an interrupted upload resume.
+ *  - Report submission and job completion were separate requests, so anything
+ *    interrupting the gap left the report saved but the job not completed.
+ *    Finalize does both server-side, and is idempotent.
+ *
+ * `clientSubmissionId` must be stable across retries of the same report — it is
+ * how the server recognises a resumed submission rather than a new one.
+ */
+export const submitInspectionReportResumable = async (
+  jobId: string,
+  payload: InspectionSubmissionPayload,
+  options: {
+    clientSubmissionId: string;
+    onProgress?: (progress: InspectionSubmitProgress) => void;
+  }
+): Promise<{ submissionId: string; completion: any }> => {
+  const baseUrl = BASE_URL;
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  if (!/^[0-9a-fA-F]{24}$/.test(jobId)) {
+    throw new Error(
+      `Invalid job ID format: ${jobId}. Expected 24-character MongoDB ObjectId.`
+    );
+  }
+
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const { fieldMeta, entries } = collectInspectionMedia(payload);
+  const totalMedia = entries.length;
+
+  const report = (phase: InspectionSubmitProgress["phase"], uploaded: number) =>
+    options.onProgress?.({ phase, uploadedMedia: uploaded, totalMedia });
+
+  // 1. Create (or resume) the submission record.
+  report("creating", 0);
+  const createJson = await requestWithTimeout(
+    `${baseUrl}/api/v1/jobs/${jobId}/inspection-submissions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientSubmissionId: options.clientSubmissionId,
+        jobType: payload.template.jobType,
+        templateVersion: payload.template.version,
+        formData: normalizeSubmissionFormData(
+          payload.template,
+          payload.formValues
+        ),
+        notes: payload.notes || "",
+      }),
+    },
+    SUBMISSION_STEP_TIMEOUT_MS,
+    "Preparing the report"
+  );
+
+  const submissionId = createJson?.data?.submissionId;
+  if (!submissionId) {
+    throw new Error("Server did not return a submission id");
+  }
+
+  // 2. Upload photos in batches. Already-uploaded photos are skipped server-side
+  //    by clientMediaId, so a resumed submission only sends what is missing.
+  const batches: CollectedMediaEntry[][] = [];
+  let current: CollectedMediaEntry[] = [];
+  let currentBytes = 0;
+
+  for (const entry of entries) {
+    const wouldExceed =
+      current.length >= MEDIA_BATCH_MAX_FILES ||
+      (current.length > 0 &&
+        currentBytes + entry.sizeBytes > MEDIA_BATCH_MAX_BYTES);
+
+    if (wouldExceed) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+
+    current.push(entry);
+    currentBytes += entry.sizeBytes;
+  }
+  if (current.length) {
+    batches.push(current);
+  }
+
+  let uploaded = 0;
+  report("uploading", uploaded);
+
+  for (const batch of batches) {
+    const form = new FormData();
+    const batchMeta: Record<string, any> = {};
+
+    // Files are matched to their clientMediaId by position within each field,
+    // so append order and the id array must stay in step.
+    for (const entry of batch) {
+      if (!batchMeta[entry.uploadFieldId]) {
+        const base = fieldMeta[entry.uploadFieldId];
+        batchMeta[entry.uploadFieldId] = {
+          label: base.label,
+          metadata: { ...base.metadata, clientMediaIds: [] },
+        };
+      }
+      batchMeta[entry.uploadFieldId].metadata.clientMediaIds.push(
+        entry.clientMediaId
+      );
+      form.append(`media__${entry.uploadFieldId}`, entry.file as any);
+    }
+
+    form.append("mediaMeta", JSON.stringify(batchMeta));
+
+    await requestWithTimeout(
+      `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/media-batch`,
+      { method: "POST", headers: authHeaders, body: form },
+      SUBMISSION_STEP_TIMEOUT_MS,
+      "Uploading photos"
+    );
+
+    uploaded += batch.length;
+    report("uploading", uploaded);
+  }
+
+  // 3. Finalize: submits the report and completes the job in one step.
+  report("finalizing", uploaded);
+  const finalizeJson = await requestWithTimeout(
+    `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/finalize`,
+    { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: "{}" },
+    FINALIZE_TIMEOUT_MS,
+    "Finalising the report"
+  );
+
+  return { submissionId, completion: finalizeJson?.data ?? finalizeJson };
 };
 
 // Fetch available jobs

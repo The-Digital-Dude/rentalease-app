@@ -25,7 +25,8 @@ import {
   fetchInspectionTemplates,
   fetchInspectionTemplate,
   fetchJobInspectionTemplate,
-  submitInspectionReport,
+  submitInspectionReportResumable,
+  type InspectionSubmitProgress,
   fetchJobDetails,
   getMediaStorageKey,
 } from "../services/jobs";
@@ -156,6 +157,7 @@ type InspectionDraft = {
   notes: string;
   inspectionReportId: string | null;
   inspectionReportUrl?: string;
+  clientSubmissionId?: string;
   jobCompletionCommitted: boolean;
   hasInvoice: boolean;
   invoiceDescription: string;
@@ -995,6 +997,14 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     string | undefined
   >(undefined);
   const [jobCompletionCommitted, setJobCompletionCommitted] = useState(false);
+  // Identifies this report to the server across retries. Persisted with the
+  // draft so resuming an interrupted submission continues the same server-side
+  // submission rather than starting a second one.
+  const [clientSubmissionId, setClientSubmissionId] = useState<string>(
+    () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  );
+  const [submitProgress, setSubmitProgress] =
+    useState<InspectionSubmitProgress | null>(null);
 
   const [hasInvoice, setHasInvoice] = useState(false);
   const [invoiceDescription, setInvoiceDescription] = useState("Safety inspection and compliance check for rental property");
@@ -1079,6 +1089,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       notes,
       inspectionReportId,
       inspectionReportUrl,
+      clientSubmissionId,
       jobCompletionCommitted,
       hasInvoice,
       invoiceDescription,
@@ -1098,6 +1109,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       notes,
       inspectionReportId,
       inspectionReportUrl,
+      clientSubmissionId,
       jobCompletionCommitted,
       hasInvoice,
       invoiceDescription,
@@ -1143,6 +1155,9 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     setNotes(draft.notes || "");
     setInspectionReportId(draft.inspectionReportId || null);
     setInspectionReportUrl(draft.inspectionReportUrl);
+    if (draft.clientSubmissionId) {
+      setClientSubmissionId(draft.clientSubmissionId);
+    }
     setJobCompletionCommitted(Boolean(draft.jobCompletionCommitted));
     setHasInvoice(Boolean(draft.hasInvoice));
     setInvoiceDescription(
@@ -1493,7 +1508,6 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       Alert.alert("Template missing", "Select a template before submitting.");
       return;
     }
-    const gasV3Submission = isGasTemplateV3(selectedTemplate);
     const missing = validateRequiredFields(
       selectedTemplate,
       formValues,
@@ -1551,44 +1565,41 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       let reportId = inspectionReportId;
       let reportUrl = inspectionReportUrl;
 
-      const completionPayload: JobCompletionData = {};
-
-      if (gasV3Submission) {
-        if (!reportId) {
-          const submission = await submitInspectionReport(jobId, {
+      // Submits the report and completes the job in one server-side flow.
+      // Photos upload in batches, so an interrupted attempt resumes from where
+      // it stopped instead of re-sending everything, and the job can no longer
+      // be left with a saved report but an incomplete status.
+      if (!jobCompletionCommitted && job?.status !== "Completed") {
+        const { completion } = await submitInspectionReportResumable(
+          jobId,
+          {
             template: selectedTemplate,
             formValues,
             mediaByField,
             notes,
-          });
-          reportId = submission.report.id;
-          reportUrl = submission.pdf?.url;
-          setInspectionReportId(reportId);
-          setInspectionReportUrl(reportUrl);
-        }
+          },
+          {
+            clientSubmissionId,
+            onProgress: setSubmitProgress,
+          }
+        );
 
-        if (!jobCompletionCommitted && job?.status !== "Completed") {
-          completionPayload.inspectionReportId = reportId || undefined;
-          await onSubmit(completionPayload);
-          setJobCompletionCommitted(true);
-        }
-      } else {
-        if (!reportId) {
-          const submission = await submitInspectionReport(jobId, {
-            template: selectedTemplate,
-            formValues,
-            mediaByField,
-            notes,
-          });
-          reportId = submission.report.id;
-          reportUrl = submission.pdf?.url;
-          setInspectionReportId(reportId);
-          setInspectionReportUrl(reportUrl);
-        }
+        const completedJob = completion?.job || completion?.data?.job;
+        reportId =
+          completedJob?.latestInspectionReport?.id ||
+          completedJob?.latestInspectionReport?._id ||
+          completedJob?.latestInspectionReport ||
+          reportId;
+        reportUrl = completedJob?.reportFile || reportUrl;
 
-        completionPayload.inspectionReportId = reportId || undefined;
-        await onSubmit(completionPayload);
+        setInspectionReportId(reportId);
+        setInspectionReportUrl(reportUrl);
+        setJobCompletionCommitted(true);
       }
+
+      // Lets the parent screen refresh its job state. The job is already
+      // completed by finalize, so this is idempotent server-side.
+      await onSubmit({ inspectionReportId: reportId || undefined });
 
       Alert.alert(
         "Success",
@@ -1602,14 +1613,19 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     } catch (error: any) {
       console.log(error, "Error...RentalEase");
       console.error("Job completion failed", error);
+      // Report submission and completion are one server-side step now, so the
+      // old "job completed but report failed" split state is no longer
+      // reachable. Retrying resumes the same submission and re-sends only the
+      // photos that did not make it.
       Alert.alert(
         "Unable to complete job",
-        gasV3Submission && jobCompletionCommitted
-          ? `The job was completed, but the gas report submission failed. ${error?.message || "Please retry the report submission."}`
-          : error?.message || "Please try again."
+        `${error?.message || "Please try again."}
+
+Your progress is saved — retrying will continue from where it stopped.`
       );
     } finally {
       setIsSubmitting(false);
+      setSubmitProgress(null);
     }
   };
 
@@ -2233,6 +2249,16 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const renderFooterActions = () => {
     const stepKey: StepKey = steps[currentStepIndex].key;
 
+    // Photo upload dominates the wait on a large report, so the count is the
+    // only feedback that meaningfully tells a technician it is still working.
+    const submitProgressLabel = !submitProgress
+      ? null
+      : submitProgress.phase === "uploading" && submitProgress.totalMedia > 0
+      ? `Uploading photos ${submitProgress.uploadedMedia}/${submitProgress.totalMedia}`
+      : submitProgress.phase === "finalizing"
+      ? "Generating report…"
+      : "Preparing…";
+
     const primaryLabel =
       stepKey === "template"
         ? "Continue"
@@ -2290,7 +2316,14 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           disabled={isSubmitting || loadingDynamicTemplate}
         >
           {isSubmitting || loadingDynamicTemplate ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <View style={styles.footerProgressRow}>
+              <ActivityIndicator size="small" color="#fff" />
+              {submitProgressLabel ? (
+                <Text style={styles.footerPrimaryText}>
+                  {submitProgressLabel}
+                </Text>
+              ) : null}
+            </View>
           ) : (
             <Text style={styles.footerPrimaryText}>{primaryLabel}</Text>
           )}
@@ -2774,6 +2807,11 @@ const createStyles = (theme: any, isDark: boolean) =>
       color: "#fff",
       fontSize: 16,
       fontWeight: "700",
+    },
+    footerProgressRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
     },
     // Room configuration styles
     roomConfigCard: {
