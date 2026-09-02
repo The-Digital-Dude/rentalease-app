@@ -158,6 +158,12 @@ type InspectionDraft = {
   inspectionReportId: string | null;
   inspectionReportUrl?: string;
   clientSubmissionId?: string;
+  /** Set while a submission is in flight and cleared when it finishes. Its
+   *  presence in a restored draft is what tells us to resume automatically
+   *  rather than wait for the technician to notice and press submit again. */
+  submissionInFlight?: boolean;
+  /** clientMediaIds confirmed uploaded, so a resumed attempt skips them. */
+  uploadedMediaIds?: string[];
   jobCompletionCommitted: boolean;
   hasInvoice: boolean;
   invoiceDescription: string;
@@ -1028,6 +1034,35 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
   const hasTechnicianInputRef = useRef(false);
   const suppressDraftSavesRef = useRef(false);
   const saveDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Submission-resume bookkeeping. Refs rather than state: these are read and
+  // written from inside the async submit, where a stale closure over state
+  // would silently resume from the wrong place.
+  const submissionInFlightRef = useRef(false);
+  const uploadedMediaIdsRef = useRef<Set<string>>(new Set());
+  const isSubmittingRef = useRef(false);
+  // Keeps the latest handleSubmit reachable from the AppState listener and the
+  // open-modal effect without making either depend on every value handleSubmit
+  // closes over. Assigned on each render, below where handleSubmit is defined.
+  const handleSubmitRef = useRef<(() => Promise<void>) | null>(null);
+
+  /**
+   * Resumes an interrupted submission.
+   *
+   * Called when the app returns to the foreground and when the modal opens onto
+   * a draft that was left mid-upload. Both are user-driven moments, so there is
+   * no retry loop here — if a resume fails, the technician is back where they
+   * were, with everything already uploaded still counted.
+   */
+  const resumeSubmissionIfInterrupted = useCallback(() => {
+    if (
+      !submissionInFlightRef.current ||
+      isSubmittingRef.current ||
+      jobCompletionCommitted
+    ) {
+      return;
+    }
+    void handleSubmitRef.current?.();
+  }, [jobCompletionCommitted]);
 
   const markDraftDirty = useCallback((protectFromReinitialize = false) => {
     if (!draftReady) {
@@ -1045,6 +1080,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       clearTimeout(saveDraftTimerRef.current);
       saveDraftTimerRef.current = null;
     }
+    submissionInFlightRef.current = false;
+    uploadedMediaIdsRef.current = new Set();
     setCurrentStepIndex(0);
     setTemplates([]);
     setSelectedTemplate(null);
@@ -1090,6 +1127,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       inspectionReportId,
       inspectionReportUrl,
       clientSubmissionId,
+      submissionInFlight: submissionInFlightRef.current,
+      uploadedMediaIds: Array.from(uploadedMediaIdsRef.current),
       jobCompletionCommitted,
       hasInvoice,
       invoiceDescription,
@@ -1119,12 +1158,19 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     ]
   );
 
-  const persistDraft = useCallback(async () => {
+  /**
+   * @param force writes even when the "has the technician touched anything yet"
+   * guards would normally skip. Used for submission-resume bookkeeping, which
+   * must reach disk before the upload starts — if that flag is missing, a kill
+   * mid-upload leaves nothing to resume from.
+   */
+  const persistDraft = useCallback(async (force = false) => {
     if (
-      !visible ||
-      !draftReady ||
-      suppressDraftSavesRef.current ||
-      (!hasUserEditedRef.current && !draftRestoredRef.current)
+      !force &&
+      (!visible ||
+        !draftReady ||
+        suppressDraftSavesRef.current ||
+        (!hasUserEditedRef.current && !draftRestoredRef.current))
     ) {
       return;
     }
@@ -1158,6 +1204,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
     if (draft.clientSubmissionId) {
       setClientSubmissionId(draft.clientSubmissionId);
     }
+    uploadedMediaIdsRef.current = new Set(draft.uploadedMediaIds || []);
+    submissionInFlightRef.current = Boolean(draft.submissionInFlight);
     setJobCompletionCommitted(Boolean(draft.jobCompletionCommitted));
     setHasInvoice(Boolean(draft.hasInvoice));
     setInvoiceDescription(
@@ -1213,10 +1261,17 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           if (storedDraft) {
             const draft = JSON.parse(storedDraft) as InspectionDraft;
             if (draft.version === DRAFT_VERSION && draft.jobId === jobId) {
+              const wasMidUpload = Boolean(draft.submissionInFlight);
               const shouldResumeDraft = await new Promise<boolean>((resolve) => {
                 Alert.alert(
-                  "Resume inspection draft?",
-                  "There is saved progress for this job. Resume it or start a new form.",
+                  wasMidUpload
+                    ? "Resume interrupted submission?"
+                    : "Resume inspection draft?",
+                  wasMidUpload
+                    ? `This job was still uploading when it was interrupted. ${
+                        (draft.uploadedMediaIds || []).length
+                      } photos are already uploaded — resuming continues from there. Starting over discards them.`
+                    : "There is saved progress for this job. Resume it or start a new form.",
                   [
                     {
                       text: "Start over",
@@ -1254,6 +1309,27 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       resetState();
     }
   }, [visible]);
+
+  // Resumes a submission that was interrupted badly enough that the app was
+  // closed. Deliberately waits for the template to finish loading: handleSubmit
+  // needs it, and it arrives asynchronously after the draft is restored.
+  const autoResumeDoneRef = useRef(false);
+  useEffect(() => {
+    if (!visible) {
+      autoResumeDoneRef.current = false;
+      return;
+    }
+    if (
+      autoResumeDoneRef.current ||
+      !draftReady ||
+      !selectedTemplate ||
+      !submissionInFlightRef.current
+    ) {
+      return;
+    }
+    autoResumeDoneRef.current = true;
+    resumeSubmissionIfInterrupted();
+  }, [visible, draftReady, selectedTemplate, resumeSubmissionIfInterrupted]);
 
   // Re-initialize form values when both template and job details are loaded
   useEffect(() => {
@@ -1301,11 +1377,19 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           saveDraftTimerRef.current = null;
         }
         persistDraft();
+        return;
+      }
+
+      if (nextState === "active") {
+        // Back from a call or another app. Photos handed to the OS may have
+        // finished while we were away; anything still outstanding picks up
+        // here rather than waiting for the technician to retry by hand.
+        resumeSubmissionIfInterrupted();
       }
     });
 
     return () => subscription.remove();
-  }, [persistDraft, visible]);
+  }, [persistDraft, resumeSubmissionIfInterrupted, visible]);
 
   const loadJobDetails = async () => {
     try {
@@ -1526,6 +1610,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
 
     try {
       setIsSubmitting(true);
+      isSubmittingRef.current = true;
 
       // Validate if job can be completed BEFORE creating inspection report
       if (
@@ -1570,6 +1655,12 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       // it stopped instead of re-sending everything, and the job can no longer
       // be left with a saved report but an incomplete status.
       if (!jobCompletionCommitted && job?.status !== "Completed") {
+        // Mark the attempt as in flight and write it to the draft before the
+        // first byte goes out. If the app is killed mid-upload, this flag is
+        // what tells the next launch to pick the submission back up.
+        submissionInFlightRef.current = true;
+        await persistDraft(true);
+
         const { completion } = await submitInspectionReportResumable(
           jobId,
           {
@@ -1581,6 +1672,13 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           {
             clientSubmissionId,
             onProgress: setSubmitProgress,
+            completedMediaIds: Array.from(uploadedMediaIdsRef.current),
+            onMediaUploaded: (mediaId) => {
+              uploadedMediaIdsRef.current.add(mediaId);
+              // Persisted per photo so an interruption costs one photo, not
+              // the whole upload. The write is small and local.
+              void persistDraft(true);
+            },
           }
         );
 
@@ -1595,6 +1693,7 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
         setInspectionReportId(reportId);
         setInspectionReportUrl(reportUrl);
         setJobCompletionCommitted(true);
+        submissionInFlightRef.current = false;
       }
 
       // Lets the parent screen refresh its job state. The job is already
@@ -1607,6 +1706,8 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
           ? "Inspection submitted and job completed successfully."
           : "Job completed successfully."
       );
+      submissionInFlightRef.current = false;
+      uploadedMediaIdsRef.current = new Set();
       suppressDraftSavesRef.current = true;
       await clearDraft();
       onClose();
@@ -1615,25 +1716,41 @@ const JobCompletionModal: React.FC<JobCompletionModalProps> = ({
       console.error("Job completion failed", error);
       // Report submission and completion are one server-side step now, so the
       // old "job completed but report failed" split state is no longer
-      // reachable. Retrying resumes the same submission and re-sends only the
-      // photos that did not make it.
+      // reachable. The submission stays flagged in flight, so returning to the
+      // app or reopening the job continues it automatically; this alert is the
+      // fallback for when that has not happened yet.
       Alert.alert(
-        "Unable to complete job",
+        "Upload paused",
         `${error?.message || "Please try again."}
 
-Your progress is saved — retrying will continue from where it stopped.`
+Your progress is saved. This will continue on its own when you come back to the app, or you can press Complete Job to resume now.`
       );
     } finally {
       setIsSubmitting(false);
+      isSubmittingRef.current = false;
       setSubmitProgress(null);
+      void persistDraft();
     }
   };
+
+  handleSubmitRef.current = handleSubmit;
 
   const handleTemplateSelect = (template: InspectionTemplate) => {
     applyTemplatePrefill(template, true);
   };
 
   const handleClose = () => {
+    // Dismissing the sheet unmounts this component and takes the progress UI
+    // with it, so it is blocked while photos are going up. The upload itself
+    // survives backgrounding now, but there is no reason to let the technician
+    // lose sight of it mid-flight.
+    if (isSubmitting) {
+      Alert.alert(
+        "Upload in progress",
+        "Photos are still uploading. You can switch apps or take a call — this keeps going — but please leave this screen open until it finishes."
+      );
+      return;
+    }
     persistDraft().finally(() => {
       onClose();
     });

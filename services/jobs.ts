@@ -1,5 +1,45 @@
+import { AppState } from "react-native";
 import { getToken } from "./secureStore";
 import { BASE_URL } from "../config/api";
+
+/**
+ * `expo-file-system`'s legacy API, loaded lazily.
+ *
+ * `uploadAsync` with `sessionType: BACKGROUND` hands the upload to the OS
+ * (NSURLSession background configuration on iOS, always-background on Android),
+ * so a photo keeps uploading while the technician takes a call or switches
+ * apps. That is the one thing a plain `fetch` cannot do: JavaScript is
+ * suspended when the app leaves the foreground, and any `fetch` in flight dies
+ * with it.
+ *
+ * Worth loading it defensively, in the same shape as the image-manipulator
+ * accessor in InspectionForm: the module has shipped in every build since
+ * before 1.0.14, but an update that assumes a native module and is wrong takes
+ * out every install at once. If it is ever missing we fall back to the batched
+ * `fetch` path, which still works — it just cannot survive backgrounding.
+ */
+let legacyFileSystem: any | null | undefined;
+const getBackgroundUploader = () => {
+  if (legacyFileSystem === undefined) {
+    try {
+      const mod = require("expo-file-system/legacy");
+      legacyFileSystem =
+        typeof mod?.uploadAsync === "function" &&
+        mod?.FileSystemUploadType &&
+        mod?.FileSystemSessionType
+          ? mod
+          : null;
+    } catch {
+      legacyFileSystem = null;
+    }
+    if (!legacyFileSystem) {
+      console.warn(
+        "[Inspection] Background upload unavailable — photos will upload in the foreground only."
+      );
+    }
+  }
+  return legacyFileSystem;
+};
 
 export type Job = {
   id: string;
@@ -703,6 +743,73 @@ export type InspectionSubmitProgress = {
   totalMedia: number;
 };
 
+/** Per-field metadata for a single photo, shaped the way the server's
+ *  media-batch handler expects. `clientMediaIds` is positional: the server
+ *  matches ids to files by index within the field, so a one-file request
+ *  carries a one-element array. */
+const buildSingleMediaMeta = (
+  entry: CollectedMediaEntry,
+  fieldMeta: CollectedMedia["fieldMeta"]
+) => {
+  const base = fieldMeta[entry.uploadFieldId];
+  return {
+    [entry.uploadFieldId]: {
+      label: base.label,
+      metadata: { ...base.metadata, clientMediaIds: [entry.clientMediaId] },
+    },
+  };
+};
+
+/**
+ * Uploads one photo through the OS background session.
+ *
+ * One file per request rather than eight: `uploadAsync` takes a single file,
+ * and the trade is worth it. Each request is small enough to survive a poor
+ * connection, the server decodes one image at a time instead of eight (which
+ * is what was driving it out of memory), and an interruption costs at most one
+ * photo instead of a whole batch.
+ */
+const uploadMediaEntryInBackground = async (
+  fs: any,
+  url: string,
+  authHeaders: Record<string, string>,
+  entry: CollectedMediaEntry,
+  fieldMeta: CollectedMedia["fieldMeta"]
+): Promise<void> => {
+  const result = await fs.uploadAsync(url, entry.file.uri, {
+    httpMethod: "POST",
+    uploadType: fs.FileSystemUploadType.MULTIPART,
+    sessionType: fs.FileSystemSessionType.BACKGROUND,
+    fieldName: `media__${entry.uploadFieldId}`,
+    mimeType: entry.file.type,
+    parameters: {
+      mediaMeta: JSON.stringify(buildSingleMediaMeta(entry, fieldMeta)),
+    },
+    headers: authHeaders,
+  });
+
+  if (result.status < 200 || result.status >= 300) {
+    let message = `Uploading photos failed (${result.status})`;
+    try {
+      const parsed = JSON.parse(result.body);
+      if (parsed?.message) message = parsed.message;
+    } catch {
+      // Non-JSON error body; the status code is all we have.
+    }
+    throw new Error(message);
+  }
+};
+
+/**
+ * `fetch` with a timeout that only runs while the app is in the foreground.
+ *
+ * A plain `setTimeout` is frozen along with the rest of the JS thread when the
+ * app is backgrounded, then fires the moment it resumes — so a technician who
+ * took a two-minute call came back to an instant "timed out" on a request that
+ * had never had a chance to run. Suspending the deadline while the app is away
+ * means the timeout measures time the request was actually able to make
+ * progress, which is what it was always meant to measure.
+ */
 const requestWithTimeout = async (
   url: string,
   init: RequestInit,
@@ -710,7 +817,32 @@ const requestWithTimeout = async (
   description: string
 ): Promise<any> => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let remainingMs = timeoutMs;
+  let startedAt = Date.now();
+
+  const startTimer = () => {
+    startedAt = Date.now();
+    timeoutId = setTimeout(() => controller.abort(), remainingMs);
+  };
+  const stopTimer = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+      remainingMs = Math.max(1000, remainingMs - (Date.now() - startedAt));
+    }
+  };
+
+  if (AppState.currentState === "active") {
+    startTimer();
+  }
+  const appStateSub = AppState.addEventListener("change", (next) => {
+    if (next === "active") {
+      if (!timeoutId) startTimer();
+    } else {
+      stopTimer();
+    }
+  });
 
   let res: Response;
   try {
@@ -723,7 +855,8 @@ const requestWithTimeout = async (
     }
     throw new Error(e?.message || "Network request failed");
   } finally {
-    clearTimeout(timeoutId);
+    stopTimer();
+    appStateSub.remove();
   }
 
   const json = await res.json();
@@ -756,6 +889,15 @@ export const submitInspectionReportResumable = async (
   options: {
     clientSubmissionId: string;
     onProgress?: (progress: InspectionSubmitProgress) => void;
+    /** clientMediaIds already confirmed uploaded by an earlier attempt. Those
+     *  photos are skipped entirely, so a resumed submission does not re-send
+     *  bytes the server would only discard. */
+    completedMediaIds?: string[];
+    /** Called after each photo lands, so the caller can persist progress and
+     *  resume from this exact point if the attempt is interrupted. */
+    onMediaUploaded?: (clientMediaId: string) => void;
+    /** Called once the server-side submission exists. */
+    onSubmissionCreated?: (submissionId: string) => void;
   }
 ): Promise<{ submissionId: string; completion: any }> => {
   const baseUrl = BASE_URL;
@@ -804,66 +946,98 @@ export const submitInspectionReportResumable = async (
   if (!submissionId) {
     throw new Error("Server did not return a submission id");
   }
+  options.onSubmissionCreated?.(submissionId);
 
-  // 2. Upload photos in batches. Already-uploaded photos are skipped server-side
-  //    by clientMediaId, so a resumed submission only sends what is missing.
-  const batches: CollectedMediaEntry[][] = [];
-  let current: CollectedMediaEntry[] = [];
-  let currentBytes = 0;
+  // 2. Upload photos. Anything a previous attempt already landed is skipped
+  //    here rather than re-sent, and the server dedupes on clientMediaId as a
+  //    second line of defence if this list is ever behind.
+  const mediaUrl = `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/media-batch`;
+  const alreadyUploaded = new Set(options.completedMediaIds || []);
+  const pending = entries.filter(
+    (entry) => !alreadyUploaded.has(entry.clientMediaId)
+  );
 
-  for (const entry of entries) {
-    const wouldExceed =
-      current.length >= MEDIA_BATCH_MAX_FILES ||
-      (current.length > 0 &&
-        currentBytes + entry.sizeBytes > MEDIA_BATCH_MAX_BYTES);
-
-    if (wouldExceed) {
-      batches.push(current);
-      current = [];
-      currentBytes = 0;
-    }
-
-    current.push(entry);
-    currentBytes += entry.sizeBytes;
-  }
-  if (current.length) {
-    batches.push(current);
-  }
-
-  let uploaded = 0;
+  let uploaded = totalMedia - pending.length;
   report("uploading", uploaded);
 
-  for (const batch of batches) {
-    const form = new FormData();
-    const batchMeta: Record<string, any> = {};
+  const uploader = getBackgroundUploader();
 
-    // Files are matched to their clientMediaId by position within each field,
-    // so append order and the id array must stay in step.
-    for (const entry of batch) {
-      if (!batchMeta[entry.uploadFieldId]) {
-        const base = fieldMeta[entry.uploadFieldId];
-        batchMeta[entry.uploadFieldId] = {
-          label: base.label,
-          metadata: { ...base.metadata, clientMediaIds: [] },
-        };
-      }
-      batchMeta[entry.uploadFieldId].metadata.clientMediaIds.push(
-        entry.clientMediaId
+  if (uploader) {
+    // Preferred path: one photo per request, handed to the OS so it continues
+    // through a phone call or an app switch.
+    for (const entry of pending) {
+      await uploadMediaEntryInBackground(
+        uploader,
+        mediaUrl,
+        authHeaders,
+        entry,
+        fieldMeta
       );
-      form.append(`media__${entry.uploadFieldId}`, entry.file as any);
+      options.onMediaUploaded?.(entry.clientMediaId);
+      uploaded += 1;
+      report("uploading", uploaded);
+    }
+  } else {
+    // Fallback for any build without the file-system module: the original
+    // batched fetch. Correct, but dies if the app leaves the foreground.
+    const batches: CollectedMediaEntry[][] = [];
+    let current: CollectedMediaEntry[] = [];
+    let currentBytes = 0;
+
+    for (const entry of pending) {
+      const wouldExceed =
+        current.length >= MEDIA_BATCH_MAX_FILES ||
+        (current.length > 0 &&
+          currentBytes + entry.sizeBytes > MEDIA_BATCH_MAX_BYTES);
+
+      if (wouldExceed) {
+        batches.push(current);
+        current = [];
+        currentBytes = 0;
+      }
+
+      current.push(entry);
+      currentBytes += entry.sizeBytes;
+    }
+    if (current.length) {
+      batches.push(current);
     }
 
-    form.append("mediaMeta", JSON.stringify(batchMeta));
+    for (const batch of batches) {
+      const form = new FormData();
+      const batchMeta: Record<string, any> = {};
 
-    await requestWithTimeout(
-      `${baseUrl}/api/v1/jobs/inspection-submissions/${submissionId}/media-batch`,
-      { method: "POST", headers: authHeaders, body: form },
-      SUBMISSION_STEP_TIMEOUT_MS,
-      "Uploading photos"
-    );
+      // Files are matched to their clientMediaId by position within each field,
+      // so append order and the id array must stay in step.
+      for (const entry of batch) {
+        if (!batchMeta[entry.uploadFieldId]) {
+          const base = fieldMeta[entry.uploadFieldId];
+          batchMeta[entry.uploadFieldId] = {
+            label: base.label,
+            metadata: { ...base.metadata, clientMediaIds: [] },
+          };
+        }
+        batchMeta[entry.uploadFieldId].metadata.clientMediaIds.push(
+          entry.clientMediaId
+        );
+        form.append(`media__${entry.uploadFieldId}`, entry.file as any);
+      }
 
-    uploaded += batch.length;
-    report("uploading", uploaded);
+      form.append("mediaMeta", JSON.stringify(batchMeta));
+
+      await requestWithTimeout(
+        mediaUrl,
+        { method: "POST", headers: authHeaders, body: form },
+        SUBMISSION_STEP_TIMEOUT_MS,
+        "Uploading photos"
+      );
+
+      for (const entry of batch) {
+        options.onMediaUploaded?.(entry.clientMediaId);
+      }
+      uploaded += batch.length;
+      report("uploading", uploaded);
+    }
   }
 
   // 3. Finalize: submits the report and completes the job in one step.
